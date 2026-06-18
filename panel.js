@@ -245,6 +245,30 @@
     '  border-left: 3px solid #ef4444;',
     '  border-radius: 4px 8px 8px 4px;',
     '}',
+    /* 标题栏按钮行 */
+    '.goby-header-buttons { display: flex; gap: 4px; align-items: center; }',
+    '.goby-header-btn { width: 28px; height: 28px; background: transparent;',
+    '  border: none; color: #ffffff; cursor: pointer; font-size: 16px;',
+    '  display: flex; align-items: center; justify-content: center;',
+    '  border-radius: 4px; transition: background 0.15s; padding: 0; }',
+    '.goby-header-btn:hover { background: rgba(255,255,255,0.15); }',
+    '',
+    '/* 状态栏 */',
+    '.goby-status-bar { min-height: 28px; padding: 4px 12px;',
+    '  background: #f9fafb; border-top: 1px solid #e5e7eb;',
+    '  display: flex; align-items: center; justify-content: space-between;',
+    '  flex-shrink: 0; font-size: 11px; color: #6b7280;',
+    '  font-family: -apple-system, BlinkMacSystemFont, "Segoe UI", Roboto, Helvetica, Arial, sans-serif; }',
+    '.goby-status-left { display: flex; align-items: center; gap: 8px; }',
+    '.goby-status-model { font-weight: 500; color: #374151; max-width: 180px;',
+    '  overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }',
+    '.goby-status-dot { width: 8px; height: 8px; border-radius: 50%;',
+    '  flex-shrink: 0; transition: background-color 0.3s ease; }',
+    '.goby-status-dot.green { background-color: #22c55e; }',
+    '.goby-status-dot.red { background-color: #ef4444; }',
+    '.goby-status-dot.gray { background-color: #9ca3af; }',
+    '.goby-status-round { font-size: 11px; color: #6b7280; white-space: nowrap; }',
+    '',
     '@keyframes msgFadeIn {',
     '  from { opacity: 0; transform: translateY(8px); }',
     '  to { opacity: 1; transform: translateY(0); }',
@@ -285,6 +309,15 @@
   var _welcomeEl = null;
   var _inputEl = null;
   var _sendBtn = null;
+  var _settingsBtn = null;
+  var _sessionBtn = null;
+  var _closeBtn = null;
+
+  // 状态栏 DOM 引用
+  var _statusBar = null;
+  var _statusModelEl = null;
+  var _statusDotEl = null;
+  var _statusRoundEl = null;
 
   // ============================================================
   //  持久化面板状态到 chrome.storage.local
@@ -501,16 +534,45 @@
     title.className = 'goby-title';
     title.textContent = 'Goby';
 
+    // 标题栏按钮容器
+    var headerBtns = document.createElement('div');
+    headerBtns.className = 'goby-header-buttons';
+
+    var sessionBtn = document.createElement('button');
+    sessionBtn.id = 'goby-session-btn';
+    sessionBtn.className = 'goby-header-btn';
+    sessionBtn.textContent = '📋'; // 📋
+    sessionBtn.title = '会话列表';
+    // Phase 3 实现会话列表功能，目前无操作
+
+    var settingsBtn = document.createElement('button');
+    settingsBtn.id = 'goby-settings-btn';
+    settingsBtn.className = 'goby-header-btn';
+    settingsBtn.textContent = '⚙'; // ⚙
+    settingsBtn.title = '设置';
+    settingsBtn.addEventListener('click', function (e) {
+      e.stopPropagation();
+      if (typeof window.openSettingsModal === 'function') {
+        window.openSettingsModal();
+      }
+    });
+
     var closeBtn = document.createElement('button');
-    closeBtn.className = 'goby-close-btn';
-    closeBtn.textContent = '—';
+    closeBtn.id = 'goby-close-btn';
+    closeBtn.className = 'goby-header-btn goby-close-btn';
+    closeBtn.textContent = '—'; // —
+    closeBtn.title = '关闭面板';
     closeBtn.addEventListener('click', function (e) {
       e.stopPropagation();
       GobyPanel.hide();
     });
 
+    headerBtns.appendChild(sessionBtn);
+    headerBtns.appendChild(settingsBtn);
+    headerBtns.appendChild(closeBtn);
+
     header.appendChild(title);
-    header.appendChild(closeBtn);
+    header.appendChild(headerBtns);
 
     // ---- 聊天区域 ----
     var chatArea = document.createElement('div');
@@ -577,10 +639,35 @@
     inputBar.appendChild(inputEl);
     inputBar.appendChild(sendBtn);
 
+    // ---- 状态栏 ----
+    var statusBar = document.createElement('div');
+    statusBar.className = 'goby-status-bar';
+
+    var statusLeft = document.createElement('div');
+    statusLeft.className = 'goby-status-left';
+
+    var statusModelEl = document.createElement('span');
+    statusModelEl.className = 'goby-status-model';
+    statusModelEl.textContent = '加载中...';
+
+    var statusDotEl = document.createElement('span');
+    statusDotEl.className = 'goby-status-dot gray';
+
+    statusLeft.appendChild(statusModelEl);
+    statusLeft.appendChild(statusDotEl);
+
+    var statusRoundEl = document.createElement('span');
+    statusRoundEl.className = 'goby-status-round';
+    statusRoundEl.textContent = '第 0 轮';
+
+    statusBar.appendChild(statusLeft);
+    statusBar.appendChild(statusRoundEl);
+
     // 组装面板
     panel.appendChild(header);
     panel.appendChild(chatArea);
     panel.appendChild(inputBar);
+    panel.appendChild(statusBar);
 
     // 组装 Shadow DOM
     shadow.appendChild(styleEl);
@@ -595,6 +682,13 @@
     _welcomeEl = welcomeEl;
     _inputEl = inputEl;
     _sendBtn = sendBtn;
+    _settingsBtn = settingsBtn;
+    _sessionBtn = sessionBtn;
+    _closeBtn = closeBtn;
+    _statusBar = statusBar;
+    _statusModelEl = statusModelEl;
+    _statusDotEl = statusDotEl;
+    _statusRoundEl = statusRoundEl;
 
     // ---- 事件绑定 ----
 
@@ -663,6 +757,83 @@
   }
 
   // ============================================================
+  //  loadModelName — 从 storage 加载模型名到状态栏
+  //  返回 promise，保证调用方可链入异步流程
+  // ============================================================
+
+  function loadModelName() {
+    if (typeof GobyStorage !== 'undefined' && GobyStorage.getActiveProfile) {
+      return GobyStorage.getActiveProfile().then(function (activeName) {
+        if (!activeName) {
+          updateModelName('未配置');
+          return;
+        }
+        return GobyStorage.getProfiles().then(function (profiles) {
+          var profile = profiles[activeName];
+          if (profile && profile.model) {
+            updateModelName(profile.model);
+          } else {
+            updateModelName('未配置');
+          }
+        });
+      }).catch(function () {
+        updateModelName('未配置');
+      });
+    }
+    return Promise.resolve();
+  }
+
+  // ============================================================
+  //  状态栏更新函数
+  // ============================================================
+
+  /**
+   * 统一更新状态栏
+   * @param {{modelName?: string, connectionStatus?: string, roundCount?: number}} opts
+   */
+  function updateStatusBar(opts) {
+    if (opts.modelName !== undefined && _statusModelEl) {
+      _statusModelEl.textContent = opts.modelName;
+    }
+    if (opts.connectionStatus !== undefined && _statusDotEl) {
+      _statusDotEl.className = 'goby-status-dot ' + opts.connectionStatus;
+    }
+    if (opts.roundCount !== undefined && _statusRoundEl) {
+      _statusRoundEl.textContent = '第 ' + opts.roundCount + ' 轮';
+    }
+  }
+
+  /**
+   * 单独更新模型名
+   * @param {string} name
+   */
+  function updateModelName(name) {
+    if (_statusModelEl) {
+      _statusModelEl.textContent = name;
+    }
+  }
+
+  /**
+   * 单独更新连接状态点
+   * @param {string} status - 'green', 'red', 'gray'
+   */
+  function updateConnectionStatus(status) {
+    if (_statusDotEl) {
+      _statusDotEl.className = 'goby-status-dot ' + status;
+    }
+  }
+
+  /**
+   * 单独更新对话轮数
+   * @param {number} count
+   */
+  function updateRoundCount(count) {
+    if (_statusRoundEl) {
+      _statusRoundEl.textContent = '第 ' + count + ' 轮';
+    }
+  }
+
+  // ============================================================
   //  公共 API — GobyPanel
   //  保持向后兼容（Phase 1 接口签名不变）
   //  新增: appendMessage, sendMessage, renderWelcome, clearChat,
@@ -676,6 +847,7 @@
      * - 从 chrome.storage.local 读取 gobyPanelState
      * - 创建悬浮球（始终显示）
      * - 如果之前可见，创建面板并显示
+     * - 加载状态栏数据（模型名、状态点、轮数）
      * @returns {Promise<void>}
      */
     init: function () {
@@ -689,6 +861,13 @@
         // 如果之前可见，创建面板
         if (state.isVisible) {
           createPanelShell();
+
+          // 初始状态同步更新
+          updateConnectionStatus('gray');
+          updateRoundCount(0);
+
+          // 加载模型名 — 链入 promise 确保 init().then() 执行时模型名已就绪
+          return loadModelName();
         }
       });
     },
@@ -716,6 +895,11 @@
       state.isVisible = true;
       return persistState().then(function () {
         animateShow();
+      }).then(function () {
+        // 面板创建后加载模型名（适用于 init 时面板未创建、show 首次创建的情况）
+        if (_statusModelEl) {
+          return loadModelName();
+        }
       });
     },
 
@@ -804,7 +988,39 @@
     /**
      * 输入框引用
      */
-    _inputEl: null
+    _inputEl: null,
+
+    /**
+     * 更新状态栏
+     * @param {{modelName?: string, connectionStatus?: string, roundCount?: number}} opts
+     */
+    updateStatusBar: function (opts) {
+      updateStatusBar(opts);
+    },
+
+    /**
+     * 更新模型名
+     * @param {string} name
+     */
+    updateModelName: function (name) {
+      updateModelName(name);
+    },
+
+    /**
+     * 更新连接状态点
+     * @param {string} status - 'green', 'red', 'gray'
+     */
+    updateConnectionStatus: function (status) {
+      updateConnectionStatus(status);
+    },
+
+    /**
+     * 更新对话轮数
+     * @param {number} count
+     */
+    updateRoundCount: function (count) {
+      updateRoundCount(count);
+    }
   };
 
   // ---- 初始化完成后设置公共引用 ----
