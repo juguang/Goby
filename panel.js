@@ -199,9 +199,25 @@
     '  animation: msgFadeIn 200ms ease-out;',
     '  font-family: -apple-system, BlinkMacSystemFont, "Segoe UI", Roboto, Helvetica, Arial, sans-serif;',
     '}',
+    /* 消息头像 — 28px 小圆圈 */
+    '.goby-msg-avatar {',
+    '  width: 28px;',
+    '  height: 28px;',
+    '  border-radius: 50%;',
+    '  display: flex;',
+    '  align-items: center;',
+    '  justify-content: center;',
+    '  flex-shrink: 0;',
+    '  font-size: 15px;',
+    '  line-height: 1;',
+    '}',
+    '.goby-avatar-bot { background: #eef2ff; }',
+    '.goby-avatar-user { background: #f3f4f6; }',
     /* 用户气泡: 右对齐 紫色底 白字 */
     '.goby-msg-user-wrapper {',
     '  display: flex;',
+    '  align-items: flex-end;',
+    '  gap: 8px;',
     '  justify-content: flex-end;',
     '  padding: 0 4px;',
     '}',
@@ -213,6 +229,8 @@
     /* Bot 气泡: 左对齐 灰色底 深灰字 */
     '.goby-msg-bot-wrapper {',
     '  display: flex;',
+    '  align-items: flex-end;',
+    '  gap: 8px;',
     '  justify-content: flex-start;',
     '  padding: 0 4px;',
     '}',
@@ -224,6 +242,8 @@
     /* 工具结果成功: 绿底 */
     '.goby-msg-tool-wrapper {',
     '  display: flex;',
+    '  align-items: flex-end;',
+    '  gap: 8px;',
     '  justify-content: flex-start;',
     '  padding: 0 4px;',
     '}',
@@ -236,6 +256,8 @@
     /* 工具结果错误: 红底 */
     '.goby-msg-tool-error-wrapper {',
     '  display: flex;',
+    '  align-items: flex-end;',
+    '  gap: 8px;',
     '  justify-content: flex-start;',
     '  padding: 0 4px;',
     '}',
@@ -377,7 +399,8 @@
     '.goby-sidebar-clear-btn { background: transparent; color: #ef4444; border: 1px solid #e5e7eb; }',
     '.goby-sidebar-clear-btn:hover { background: #fef2f2; }',
     /* 工具调用状态指示器 — 带脉冲动画 */
-    '.goby-tool-call-wrapper { display: flex; justify-content: flex-start; padding: 2px 4px; }',
+    '.goby-tool-call-wrapper { display: flex; align-items: flex-end; gap: 8px;',
+    '  justify-content: flex-start; padding: 2px 4px; }',
     '.goby-tool-call-badge { display: inline-flex; align-items: center; gap: 6px;',
     '  padding: 6px 12px; border-radius: 16px; font-size: 12px;',
     '  background: #eef2ff; color: #4f46e5; border: 1px solid #c7d2fe;',
@@ -492,6 +515,17 @@
   //  所有用户输入通过 textContent 赋值，绝不使用 innerHTML（SEC-02）
   // ============================================================
 
+  /**
+   * 创建头像圆圈元素
+   * @param {string} role - 'user' | 'bot' | 'tool' | 'tool-error'
+   */
+  function createAvatar(role) {
+    var avatar = document.createElement('div');
+    avatar.className = 'goby-msg-avatar ' + (role === 'user' ? 'goby-avatar-user' : 'goby-avatar-bot');
+    avatar.textContent = role === 'user' ? '👤' : '🤖';
+    return avatar;
+  }
+
   function appendMessage(role, content) {
     if (!_messagesContainer) return;
 
@@ -556,7 +590,15 @@
     // 内联动画确保 JSDOM 测试可检测（同时 CSS @keyframes 提供真实浏览器支持）
     bubbleDiv.style.animation = 'msgFadeIn 200ms ease-out';
 
-    wrapperDiv.appendChild(bubbleDiv);
+    // 头像排列: 用户=气泡+头像(右), bot/tool=头像+气泡(左)
+    var avatar = createAvatar(role);
+    if (role === 'user') {
+      wrapperDiv.appendChild(bubbleDiv);
+      wrapperDiv.appendChild(avatar);
+    } else {
+      wrapperDiv.appendChild(avatar);
+      wrapperDiv.appendChild(bubbleDiv);
+    }
     _messagesContainer.appendChild(wrapperDiv);
 
     // 自动滚动到底部
@@ -583,6 +625,9 @@
 
     var wrapperDiv = document.createElement('div');
     wrapperDiv.className = 'goby-tool-call-wrapper';
+
+    var avatar = createAvatar('bot');
+    wrapperDiv.appendChild(avatar);
 
     var badge = document.createElement('div');
     badge.className = 'goby-tool-call-badge';
@@ -1453,9 +1498,12 @@
 
     // 流式 chunk
     if (!_streamingBubble) {
-      // 创建新的 Bot 气泡
+      // 创建新的 Bot 气泡（带头像）
       var wrapperDiv = document.createElement('div');
       wrapperDiv.className = 'goby-msg-bot-wrapper';
+
+      var streamAvatar = createAvatar('bot');
+      wrapperDiv.appendChild(streamAvatar);
 
       var bubbleDiv = document.createElement('div');
       bubbleDiv.className = 'goby-msg-bubble goby-msg-bot';
