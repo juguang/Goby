@@ -11,6 +11,11 @@
  * GREEN Phase: All 8 tests pass after Task 2 & Task 3 implementation
  */
 
+// Polyfill TextEncoder/TextDecoder for jsdom (not provided by JSDOM environment)
+var { TextEncoder, TextDecoder } = require('util');
+global.TextEncoder = TextEncoder;
+global.TextDecoder = TextDecoder;
+
 // Load chrome mock
 require('./__mocks__/chrome.js');
 
@@ -115,12 +120,7 @@ describe('LLM Streaming via Service Worker', function () {
     var message = {
       action: 'llm-stream',
       messages: [{ role: 'user', content: 'hi' }],
-      tools: [],
-      config: {
-        baseUrl: 'http://test.com/v1',
-        apiKey: 'sk-test-key',
-        model: 'test-model'
-      }
+      tools: []
     };
     var sender = { id: chrome.runtime.id, tab: { id: TEST_TAB_ID } };
 
