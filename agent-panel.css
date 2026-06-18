@@ -1,80 +1,22 @@
-/* Goby Agent Panel Styles — Plan 01-03 */
-/* Phase 1: 面板浮层样式 + 设置模态框样式 */
+/* Goby Agent Panel Styles — Plan 02-01 */
+/* Phase 2: Shadow DOM 面板悬浮球 + 设置模态框样式 */
+/* 面板内部样式已移至 panel.js PANEL_CSS 常量 */
 
-/* ---- Panel Floating Layer ---- */
+/* ---- Floating Ball ---- */
 
-.goby-panel-container {
-  position: fixed;
-  bottom: 20px;
-  right: 20px;
-  z-index: 2147483646;
-  display: flex;
-  flex-direction: column;
-}
-
-.goby-panel-shell {
-  width: 400px;
-  height: 480px;
-  background: #ffffff;
-  border-radius: 12px;
-  box-shadow: 0 20px 60px rgba(0, 0, 0, 0.3);
-  overflow: hidden;
-  display: flex;
-  flex-direction: column;
-}
-
-.goby-panel-placeholder {
-  flex: 1;
+.goby-floating-ball {
   display: flex;
   align-items: center;
   justify-content: center;
-  color: #6b7280;
-  font-size: 13px;
-  font-family: -apple-system, BlinkMacSystemFont, "Segoe UI", Roboto, Helvetica, Arial, sans-serif;
-  padding: 16px;
-  text-align: center;
 }
 
-.goby-panel-hidden {
-  display: none;
+.goby-floating-ball:hover {
+  transform: scale(1.05);
+  box-shadow: 0 6px 16px rgba(0, 0, 0, 0.3);
 }
 
-/* ---- Panel Header (Task 2) ---- */
-
-.goby-panel-header {
-  height: 36px;
-  background: linear-gradient(135deg, #667eea, #764ba2);
-  display: flex;
-  align-items: center;
-  justify-content: space-between;
-  padding: 0 14px;
-  color: #ffffff;
-  flex-shrink: 0;
-}
-
-.goby-panel-title {
-  font-size: 15px;
-  font-weight: 600;
-  font-family: -apple-system, BlinkMacSystemFont, "Segoe UI", Roboto, Helvetica, Arial, sans-serif;
-}
-
-.goby-panel-settings-btn {
-  width: 28px;
-  height: 28px;
-  background: transparent;
-  border: none;
-  color: #ffffff;
-  cursor: pointer;
-  font-size: 16px;
-  display: flex;
-  align-items: center;
-  justify-content: center;
-  border-radius: 4px;
-  transition: background 0.15s;
-}
-
-.goby-panel-settings-btn:hover {
-  background: rgba(255, 255, 255, 0.15);
+.goby-floating-ball:active {
+  transform: scale(0.95);
 }
 
 /* ---- Settings Modal ---- */

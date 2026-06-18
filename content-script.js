@@ -31,8 +31,15 @@
     return false;
   });
 
-  // ---- Init — 面板默认隐藏 ----
-  GobyPanel.init().catch(function () {
+  // ---- Init — 面板默认隐藏，autoStart 控制自动展开 ----
+  GobyPanel.init().then(function () {
+    return chrome.storage.local.get(['gobyPanelState']).then(function (result) {
+      var panelState = result.gobyPanelState || {};
+      if (panelState.autoStart) {
+        return GobyPanel.show();
+      }
+    });
+  }).catch(function () {
     // 初始化失败 — 不影响 content-script 其他功能
   });
 
