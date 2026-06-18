@@ -213,6 +213,8 @@
     '}',
     '.goby-avatar-bot { background: #eef2ff; }',
     '.goby-avatar-user { background: #f3f4f6; }',
+    '.goby-avatar-tool { background: #dcfce7; }',
+    '.goby-avatar-tool-error { background: #fee2e2; }',
     /* 用户气泡: 右对齐 紫色底 白字 */
     '.goby-msg-user-wrapper {',
     '  display: flex;',
@@ -518,11 +520,23 @@
   /**
    * 创建头像圆圈元素
    * @param {string} role - 'user' | 'bot' | 'tool' | 'tool-error'
+   * @returns {HTMLElement}
    */
   function createAvatar(role) {
     var avatar = document.createElement('div');
-    avatar.className = 'goby-msg-avatar ' + (role === 'user' ? 'goby-avatar-user' : 'goby-avatar-bot');
-    avatar.textContent = role === 'user' ? '👤' : '🤖';
+    var icon, avatarClass;
+    switch (role) {
+      case 'user':
+        icon = '👤'; avatarClass = 'goby-avatar-user'; break;
+      case 'tool':
+        icon = '✅'; avatarClass = 'goby-avatar-tool'; break;
+      case 'tool-error':
+        icon = '❌'; avatarClass = 'goby-avatar-tool-error'; break;
+      default:
+        icon = '🤖'; avatarClass = 'goby-avatar-bot'; break;
+    }
+    avatar.className = 'goby-msg-avatar ' + avatarClass;
+    avatar.textContent = icon;
     return avatar;
   }
 
@@ -626,7 +640,10 @@
     var wrapperDiv = document.createElement('div');
     wrapperDiv.className = 'goby-tool-call-wrapper';
 
-    var avatar = createAvatar('bot');
+    // 工具调用执行中使用 🔧 头像（区别于结果的 ✅/❌）
+    var avatar = document.createElement('div');
+    avatar.className = 'goby-msg-avatar goby-avatar-bot';
+    avatar.textContent = '🔧';
     wrapperDiv.appendChild(avatar);
 
     var badge = document.createElement('div');
