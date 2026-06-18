@@ -883,7 +883,52 @@
         }
       },
       timeout: 15000,
-      execute: function () { return '工具将在后续版本可用'; }
+      execute: function (args) {
+        try {
+          var selector = args.selector;
+          var value = args.value;
+          var index = args.index !== undefined ? args.index : 0;
+          var elements = document.querySelectorAll(selector);
+
+          if (elements.length === 0) {
+            return 'No elements found matching: ' + selector;
+          }
+
+          if (index === -1) {
+            for (var fi = 0; fi < elements.length; fi++) {
+              var fel = elements[fi];
+              if (fel.isContentEditable) {
+                fel.innerHTML = '';
+                fel.innerText = value;
+              } else {
+                fel.value = value;
+              }
+              fel.dispatchEvent(new Event('input', { bubbles: true }));
+              fel.dispatchEvent(new Event('change', { bubbles: true }));
+            }
+            return 'Filled all ' + elements.length + ' elements with: ' + value;
+          }
+
+          if (index >= elements.length) {
+            return 'Index ' + index + ' out of range. Found ' + elements.length + ' elements.';
+          }
+
+          var el = elements[index];
+          if (el.isContentEditable) {
+            el.innerHTML = '';
+            el.innerText = value;
+          } else {
+            el.value = value;
+          }
+
+          el.dispatchEvent(new Event('input', { bubbles: true }));
+          el.dispatchEvent(new Event('change', { bubbles: true }));
+
+          return "Filled '" + selector + "' with: " + value;
+        } catch (e) {
+          return 'Fill failed: ' + e.message;
+        }
+      }
     },
     {
       type: 'function',
@@ -900,7 +945,40 @@
         }
       },
       timeout: 15000,
-      execute: function () { return '工具将在后续版本可用'; }
+      execute: function (args) {
+        try {
+          var selector = args.selector;
+          var index = args.index !== undefined ? args.index : 0;
+          var elements = document.querySelectorAll(selector);
+
+          if (elements.length === 0) {
+            return 'No elements found matching: ' + selector;
+          }
+
+          if (index === -1) {
+            for (var ci = 0; ci < elements.length; ci++) {
+              var cel = elements[ci];
+              cel.click();
+              cel.dispatchEvent(new MouseEvent('mousedown', { bubbles: true }));
+              cel.dispatchEvent(new MouseEvent('mouseup', { bubbles: true }));
+            }
+            return 'Clicked all ' + elements.length + ' elements';
+          }
+
+          if (index >= elements.length) {
+            return 'Index ' + index + ' out of range. Found ' + elements.length + ' elements.';
+          }
+
+          var el = elements[index];
+          el.click();
+          el.dispatchEvent(new MouseEvent('mousedown', { bubbles: true }));
+          el.dispatchEvent(new MouseEvent('mouseup', { bubbles: true }));
+
+          return 'Clicked: ' + selector;
+        } catch (e) {
+          return 'Click failed: ' + e.message;
+        }
+      }
     },
     {
       type: 'function',
