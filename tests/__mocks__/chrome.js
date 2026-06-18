@@ -1,7 +1,7 @@
 // Chrome API mock for Jest testing
 // Mock chrome.storage.local with an in-memory store
 
-const storage = {};
+var chromeMockData = {};
 
 global.chrome = {
   runtime: {
@@ -15,25 +15,20 @@ global.chrome = {
   },
   storage: {
     local: {
-      get: jest.fn((keys) => {
-        return new Promise((resolve) => {
+      get: jest.fn(function (keys) {
+        return new Promise(function (resolve) {
           if (typeof keys === 'string') {
-            const val = storage[keys];
-            resolve({ [keys]: val !== undefined ? val : null });
+            resolve({ [keys]: chromeMockData[keys] !== undefined ? chromeMockData[keys] : null });
           } else if (Array.isArray(keys)) {
-            const result = {};
-            keys.forEach(key => {
-              const val = storage[key];
-              result[key] = val !== undefined ? val : null;
+            var result = {};
+            keys.forEach(function (key) {
+              result[key] = chromeMockData[key] !== undefined ? chromeMockData[key] : null;
             });
             resolve(result);
-          } else if (typeof keys === 'object' && keys !== null) {
-            const result = { ...keys };
-            Object.keys(keys).forEach(key => {
-              const val = storage[key];
-              if (val !== undefined) {
-                result[key] = val;
-              }
+          } else if (keys && typeof keys === 'object') {
+            var result = {};
+            Object.keys(keys).forEach(function (key) {
+              result[key] = chromeMockData[key] !== undefined ? chromeMockData[key] : keys[key];
             });
             resolve(result);
           } else {
@@ -41,29 +36,33 @@ global.chrome = {
           }
         });
       }),
-      set: jest.fn((items) => {
-        return new Promise((resolve) => {
-          Object.assign(storage, items);
-          resolve();
-        });
-      }),
-      remove: jest.fn((keys) => {
-        return new Promise((resolve) => {
-          if (Array.isArray(keys)) {
-            keys.forEach(key => delete storage[key]);
-          } else {
-            delete storage[keys];
+      set: jest.fn(function (items) {
+        return new Promise(function (resolve) {
+          if (items) {
+            Object.keys(items).forEach(function (key) {
+              chromeMockData[key] = items[key];
+            });
           }
           resolve();
         });
       }),
-      clear: jest.fn(() => {
-        Object.keys(storage).forEach(key => delete storage[key]);
+      remove: jest.fn(function (keys) {
+        return new Promise(function (resolve) {
+          if (Array.isArray(keys)) {
+            keys.forEach(function (key) { delete chromeMockData[key]; });
+          } else {
+            delete chromeMockData[keys];
+          }
+          resolve();
+        });
+      }),
+      clear: jest.fn(function () {
+        Object.keys(chromeMockData).forEach(function (key) { delete chromeMockData[key]; });
         return Promise.resolve();
       }),
-      // Helper to reset the mock store between tests
-      __resetStore: () => {
-        Object.keys(storage).forEach(key => delete storage[key]);
+      _raw: chromeMockData,
+      _reset: function () {
+        Object.keys(chromeMockData).forEach(function (key) { delete chromeMockData[key]; });
       }
     }
   },

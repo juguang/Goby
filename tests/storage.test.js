@@ -10,9 +10,12 @@
 // Load chrome mock
 require('./__mocks__/chrome.js');
 
+// Load storage.js implementation (creates GobyStorage as a global)
+require('../storage.js');
+
 describe('GobyStorage', () => {
   beforeEach(() => {
-    chrome.storage.local.__resetStore();
+    chrome.storage.local._reset();
     chrome.storage.local.set.mockClear();
     chrome.storage.local.get.mockClear();
   });
