@@ -2060,19 +2060,25 @@
 
       // 检查是否有工具调用
       if (response && response.tool_calls) {
-        // ★ 先保存 assistant 的 tool_calls 消息到历史（D-06）
+        // ★ 将 tool_calls 从对象转为数组（API 要求数组格式）
+        var tcArray = [];
+        var tcKeys = Object.keys(response.tool_calls);
+        for (var j = 0; j < tcKeys.length; j++) {
+          tcArray.push(response.tool_calls[tcKeys[j]]);
+        }
+
+        // ★ 保存 assistant 的 tool_calls 消息到历史（D-06）
         // 否则后续 tool 结果没有对应的 tool_calls 前驱，API 会报错
         _agentState.messages.push({
           role: 'assistant',
           content: response.content || null,
-          tool_calls: response.tool_calls
+          tool_calls: tcArray
         });
 
         var results = [];
-        var tcKeys = Object.keys(response.tool_calls);
 
-        for (var j = 0; j < tcKeys.length; j++) {
-          var tc = response.tool_calls[tcKeys[j]];
+        for (var j = 0; j < tcArray.length; j++) {
+          var tc = tcArray[j];
 
           // T-03-10: 检查会话总工具调用上限
           if (_agentState.toolCallCounter >= MAX_TOOL_CALLS) {
