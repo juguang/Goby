@@ -188,6 +188,73 @@
     '  opacity: 0.4;',
     '  cursor: not-allowed;',
     '}',
+    /* 消息气泡基础 */
+    '.goby-msg-bubble {',
+    '  max-width: 90%;',
+    '  padding: 10px 14px;',
+    '  border-radius: 12px;',
+    '  font-size: 13px;',
+    '  line-height: 1.5;',
+    '  word-break: break-word;',
+    '  animation: msgFadeIn 200ms ease-out;',
+    '  font-family: -apple-system, BlinkMacSystemFont, "Segoe UI", Roboto, Helvetica, Arial, sans-serif;',
+    '}',
+    /* 用户气泡: 右对齐 紫色底 白字 */
+    '.goby-msg-user-wrapper {',
+    '  display: flex;',
+    '  justify-content: flex-end;',
+    '  padding: 0 4px;',
+    '}',
+    '.goby-msg-user {',
+    '  background: #667eea;',
+    '  color: #ffffff;',
+    '  border-bottom-right-radius: 4px;',
+    '}',
+    /* Bot 气泡: 左对齐 灰色底 深灰字 */
+    '.goby-msg-bot-wrapper {',
+    '  display: flex;',
+    '  justify-content: flex-start;',
+    '  padding: 0 4px;',
+    '}',
+    '.goby-msg-bot {',
+    '  background: #f3f4f6;',
+    '  color: #111827;',
+    '  border-bottom-left-radius: 4px;',
+    '}',
+    /* 工具结果成功: 绿底 */
+    '.goby-msg-tool-wrapper {',
+    '  display: flex;',
+    '  justify-content: flex-start;',
+    '  padding: 0 4px;',
+    '}',
+    '.goby-msg-tool {',
+    '  background: #f0fdf4;',
+    '  color: #111827;',
+    '  border-left: 3px solid #22c55e;',
+    '  border-radius: 4px 8px 8px 4px;',
+    '}',
+    /* 工具结果错误: 红底 */
+    '.goby-msg-tool-error-wrapper {',
+    '  display: flex;',
+    '  justify-content: flex-start;',
+    '  padding: 0 4px;',
+    '}',
+    '.goby-msg-tool-error {',
+    '  background: #fef2f2;',
+    '  color: #111827;',
+    '  border-left: 3px solid #ef4444;',
+    '  border-radius: 4px 8px 8px 4px;',
+    '}',
+    '@keyframes msgFadeIn {',
+    '  from { opacity: 0; transform: translateY(8px); }',
+    '  to { opacity: 1; transform: translateY(0); }',
+    '}',
+    /* 消息时间戳（简约） */
+    '.goby-msg-time {',
+    '  font-size: 10px;',
+    '  opacity: 0.5;',
+    '  margin-top: 2px;',
+    '}',
     /* 消息滚动条 */
     '.goby-messages-container::-webkit-scrollbar {',
     '  width: 5px;',
@@ -319,6 +386,8 @@
     var bubbleDiv = document.createElement('div');
     bubbleDiv.className = 'goby-msg-bubble ' + bubbleClass;
     bubbleDiv.textContent = content;
+    // 内联动画确保 JSDOM 测试可检测（同时 CSS @keyframes 提供真实浏览器支持）
+    bubbleDiv.style.animation = 'msgFadeIn 200ms ease-out';
 
     wrapperDiv.appendChild(bubbleDiv);
     _messagesContainer.appendChild(wrapperDiv);
