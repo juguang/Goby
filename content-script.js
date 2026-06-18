@@ -1389,6 +1389,31 @@
       _agentState.connectionStatus = 'green';
       GobyPanel.updateConnectionStatus('green');
 
+      // ★ 净化消息格式 — 确保 content 始终为字符串，tool_calls 始终为数组
+      // 部分 API 对 null content 或对象格式 tool_calls 严格校验
+      var cleanMessages = [];
+      for (var i = 0; i < messages.length; i++) {
+        var m = messages[i];
+        var clean = { role: m.role || 'user' };
+        clean.content = (typeof m.content === 'string') ? m.content : '';
+        if (m.tool_calls) {
+          if (Array.isArray(m.tool_calls)) {
+            clean.tool_calls = m.tool_calls;
+          } else {
+            // 对象格式 {'0': {...}} → 转为数组 [{...}]
+            var tcArr = [];
+            var keys = Object.keys(m.tool_calls);
+            for (var k = 0; k < keys.length; k++) {
+              tcArr.push(m.tool_calls[keys[k]]);
+            }
+            clean.tool_calls = tcArr;
+          }
+        }
+        if (m.tool_call_id) clean.tool_call_id = m.tool_call_id;
+        if (m.name) clean.name = m.name;
+        cleanMessages.push(clean);
+      }
+
       // 构造 tools 参数（使用 nativeTools 的 function schema）
       var tools = nativeTools.map(function (t) {
         return { type: 'function', function: t.function };
@@ -1403,7 +1428,7 @@
         // 使用 Promise.resolve 包装以兼容未返回 Promise 的 mock 环境
         Promise.resolve(chrome.runtime.sendMessage({
           action: 'llm-stream',
-          messages: messages,
+          messages: cleanMessages,
           tools: tools
         })).catch(function (err) {
           reject(err);
