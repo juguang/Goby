@@ -199,20 +199,6 @@
     '  animation: msgFadeIn 200ms ease-out;',
     '  font-family: -apple-system, BlinkMacSystemFont, "Segoe UI", Roboto, Helvetica, Arial, sans-serif;',
     '}',
-    /* 消息头像 — 28px 小圆圈 */
-    '.goby-msg-avatar {',
-    '  width: 28px;',
-    '  height: 28px;',
-    '  border-radius: 50%;',
-    '  display: flex;',
-    '  align-items: center;',
-    '  justify-content: center;',
-    '  flex-shrink: 0;',
-    '  font-size: 15px;',
-    '  line-height: 1;',
-    '}',
-    '.goby-avatar-tool { background: #dcfce7; }',
-    '.goby-avatar-tool-error { background: #fee2e2; }',
     /* 用户气泡: 右对齐 紫色底 白字 */
     '.goby-msg-user-wrapper {',
     '  display: flex;',
@@ -398,16 +384,15 @@
     '.goby-sidebar-new-btn:hover { opacity: 0.85; }',
     '.goby-sidebar-clear-btn { background: transparent; color: #ef4444; border: 1px solid #e5e7eb; }',
     '.goby-sidebar-clear-btn:hover { background: #fef2f2; }',
-    /* 工具调用状态指示器 — 带脉冲动画 */
+    /* 工具调用状态指示器 — 颜色编码：黄=进行中, 绿=成功, 红=失败 */
     '.goby-tool-call-wrapper { display: flex; align-items: flex-end; gap: 8px;',
     '  justify-content: flex-start; padding: 2px 4px; }',
     '.goby-tool-call-badge { display: inline-flex; align-items: center; gap: 6px;',
     '  padding: 6px 12px; border-radius: 16px; font-size: 12px;',
-    '  background: #eef2ff; color: #4f46e5; border: 1px solid #c7d2fe;',
+    '  background: #fef3c7; color: #92400e; border: 1px solid #fcd34d;',
     '  animation: toolCallPulse 1.2s ease-in-out infinite; }',
-    '.goby-tool-call-badge .goby-tool-icon { font-size: 14px; }',
     '.goby-tool-call-badge .goby-tool-name { font-weight: 600; }',
-    '.goby-tool-call-badge .goby-tool-status { font-size: 11px; opacity: 0.7; }',
+    '.goby-tool-call-badge .goby-tool-status { font-size: 11px; opacity: 0.75; }',
     '.goby-tool-call-badge.done { animation: none; background: #f0fdf4;',
     '  border-color: #86efac; color: #166534; }',
     '.goby-tool-call-badge.error { animation: none; background: #fef2f2;',
@@ -515,27 +500,6 @@
   //  所有用户输入通过 textContent 赋值，绝不使用 innerHTML（SEC-02）
   // ============================================================
 
-  /**
-   * 创建工具状态头像圆圈元素（仅 tool / tool-error，普通聊天消息不带头像）
-   * @param {string} role - 'tool' | 'tool-error'
-   * @returns {HTMLElement|null}
-   */
-  function createAvatar(role) {
-    var icon, avatarClass;
-    switch (role) {
-      case 'tool':
-        icon = '✅'; avatarClass = 'goby-avatar-tool'; break;
-      case 'tool-error':
-        icon = '❌'; avatarClass = 'goby-avatar-tool-error'; break;
-      default:
-        return null;
-    }
-    var avatar = document.createElement('div');
-    avatar.className = 'goby-msg-avatar ' + avatarClass;
-    avatar.textContent = icon;
-    return avatar;
-  }
-
   function appendMessage(role, content) {
     if (!_messagesContainer) return;
 
@@ -600,11 +564,6 @@
     // 内联动画确保 JSDOM 测试可检测（同时 CSS @keyframes 提供真实浏览器支持）
     bubbleDiv.style.animation = 'msgFadeIn 200ms ease-out';
 
-    // 工具结果消息带头像（左），普通 user/bot 消息不带头像
-    var avatar = createAvatar(role);
-    if (avatar) {
-      wrapperDiv.appendChild(avatar);
-    }
     wrapperDiv.appendChild(bubbleDiv);
     _messagesContainer.appendChild(wrapperDiv);
 
@@ -633,16 +592,9 @@
     var wrapperDiv = document.createElement('div');
     wrapperDiv.className = 'goby-tool-call-wrapper';
 
-    // 工具调用执行中使用 🔧 头像（绿底，与结果 ✅ 一致）
-    var avatar = document.createElement('div');
-    avatar.className = 'goby-msg-avatar goby-avatar-tool';
-    avatar.textContent = '🔧';
-    wrapperDiv.appendChild(avatar);
-
     var badge = document.createElement('div');
     badge.className = 'goby-tool-call-badge';
-    badge.innerHTML = '<span class="goby-tool-icon">🔧</span>'
-      + '<span class="goby-tool-name">' + name + '</span>'
+    badge.innerHTML = '<span class="goby-tool-name">' + name + '</span>'
       + '<span class="goby-tool-status">处理中...</span>';
 
     wrapperDiv.appendChild(badge);
@@ -661,13 +613,11 @@
     if (!badgeEl) return;
     var isError = typeof result === 'string' && result.startsWith('Error:');
     badgeEl.className = 'goby-tool-call-badge ' + (isError ? 'error' : 'done');
-    var icon = isError ? '❌' : '✅';
     var maxShow = 60;
     var shortResult = (typeof result === 'string' && result.length > maxShow)
       ? result.substring(0, maxShow) + '...'
       : result || '';
-    badgeEl.innerHTML = '<span class="goby-tool-icon">' + icon + '</span>'
-      + '<span class="goby-tool-name">' + (badgeEl.querySelector('.goby-tool-name') ? badgeEl.querySelector('.goby-tool-name').textContent : '') + '</span>'
+    badgeEl.innerHTML = '<span class="goby-tool-name">' + (badgeEl.querySelector('.goby-tool-name') ? badgeEl.querySelector('.goby-tool-name').textContent : '') + '</span>'
       + '<span class="goby-tool-status">' + escapeHtml(shortResult) + '</span>';
   }
 
