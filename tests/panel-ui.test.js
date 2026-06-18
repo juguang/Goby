@@ -380,6 +380,328 @@ describe('Input Bar and Send Behavior', function () {
 });
 
 // ============================================================
+//  Describe: Title Bar Icons
+//  PANEL-04 — settings, session, close buttons
+// ============================================================
+
+describe('Title Bar Icons', function () {
+  beforeEach(function () {
+    chrome.storage.local._reset();
+    jest.clearAllMocks();
+    ['.goby-floating-ball', '.goby-panel-container', '#goby-panel-host']
+      .forEach(function (sel) {
+        var list = document.querySelectorAll(sel);
+        list.forEach(function (el) {
+          if (el && el.parentNode) el.parentNode.removeChild(el);
+        });
+      });
+    // Mock openSettingsModal
+    window.openSettingsModal = jest.fn();
+  });
+
+  it('has settings button (⚙) in the title bar', function () {
+    return GobyPanel.init().then(function () {
+      return GobyPanel.show().then(function () {
+        var host = document.getElementById('goby-panel-host');
+        var sr = host.shadowRoot;
+        var settingsBtn = sr.querySelector('#goby-settings-btn');
+        expect(settingsBtn).not.toBeNull();
+        expect(settingsBtn.textContent).toContain('⚙');
+        expect(settingsBtn.title).toBe('设置');
+      });
+    });
+  });
+
+  it('settings button opens the settings modal when clicked', function () {
+    return GobyPanel.init().then(function () {
+      return GobyPanel.show().then(function () {
+        var host = document.getElementById('goby-panel-host');
+        var sr = host.shadowRoot;
+        var settingsBtn = sr.querySelector('#goby-settings-btn');
+        expect(settingsBtn).not.toBeNull();
+        settingsBtn.click();
+        expect(window.openSettingsModal).toHaveBeenCalledTimes(1);
+      });
+    });
+  });
+
+  it('has session list button (📋) in the title bar', function () {
+    return GobyPanel.init().then(function () {
+      return GobyPanel.show().then(function () {
+        var host = document.getElementById('goby-panel-host');
+        var sr = host.shadowRoot;
+        var sessionBtn = sr.querySelector('#goby-session-btn');
+        expect(sessionBtn).not.toBeNull();
+        expect(sessionBtn.textContent).toContain('📋');
+        expect(sessionBtn.title).toContain('会话');
+      });
+    });
+  });
+
+  it('has close button (—) in the title bar that hides the panel', function () {
+    return GobyPanel.init().then(function () {
+      return GobyPanel.show().then(function () {
+        var host = document.getElementById('goby-panel-host');
+        var sr = host.shadowRoot;
+        var closeBtn = sr.querySelector('#goby-close-btn');
+        expect(closeBtn).not.toBeNull();
+        expect(closeBtn.textContent).toContain('—');
+        closeBtn.click();
+        expect(GobyPanel.getState().isVisible).toBe(false);
+      });
+    });
+  });
+});
+
+// ============================================================
+//  Describe: Status Bar
+//  PANEL-05 — model name, connection status dot, round counter
+// ============================================================
+
+describe('Status Bar', function () {
+  beforeEach(function () {
+    chrome.storage.local._reset();
+    jest.clearAllMocks();
+    ['.goby-floating-ball', '.goby-panel-container', '#goby-panel-host']
+      .forEach(function (sel) {
+        var list = document.querySelectorAll(sel);
+        list.forEach(function (el) {
+          if (el && el.parentNode) el.parentNode.removeChild(el);
+        });
+      });
+    // Preset storage config with a test profile
+    chrome.storage.local.get('agentConfig').then(function () {
+      chrome.storage.local.set({
+        agentConfig: {
+          profiles: {
+            'TestProfile': { baseUrl: 'http://test.com', apiKey: 'test-key', model: 'gpt-4' }
+          },
+          activeProfile: 'TestProfile'
+        }
+      });
+    });
+  });
+
+  it('displays the current model name from chrome.storage.local config', function () {
+    return GobyPanel.init().then(function () {
+      return GobyPanel.show().then(function () {
+        var host = document.getElementById('goby-panel-host');
+        var sr = host.shadowRoot;
+        var statusBar = sr.querySelector('.goby-status-bar');
+        expect(statusBar).not.toBeNull();
+        expect(statusBar.textContent).toContain('gpt-4');
+      });
+    });
+  });
+
+  it('shows a connection status dot (gray by default)', function () {
+    return GobyPanel.init().then(function () {
+      return GobyPanel.show().then(function () {
+        var host = document.getElementById('goby-panel-host');
+        var sr = host.shadowRoot;
+        var statusDot = sr.querySelector('.goby-status-dot');
+        expect(statusDot).not.toBeNull();
+        // Default should be gray class
+        expect(statusDot.className).toContain('gray');
+      });
+    });
+  });
+
+  it('displays round count starting at "第 0 轮"', function () {
+    return GobyPanel.init().then(function () {
+      return GobyPanel.show().then(function () {
+        var host = document.getElementById('goby-panel-host');
+        var sr = host.shadowRoot;
+        var statusBar = sr.querySelector('.goby-status-bar');
+        expect(statusBar).not.toBeNull();
+        expect(statusBar.textContent).toMatch(/0.*轮|第.*0.*轮/);
+      });
+    });
+  });
+
+  it('accepts status updates via updateStatusBar()', function () {
+    return GobyPanel.init().then(function () {
+      return GobyPanel.show().then(function () {
+        GobyPanel.updateStatusBar({ modelName: 'qwen', connectionStatus: 'green', roundCount: 3 });
+        var host = document.getElementById('goby-panel-host');
+        var sr = host.shadowRoot;
+        var statusBar = sr.querySelector('.goby-status-bar');
+        expect(statusBar).not.toBeNull();
+        expect(statusBar.textContent).toContain('qwen');
+        expect(statusBar.textContent).toContain('3');
+        var statusDot = sr.querySelector('.goby-status-dot');
+        expect(statusDot).not.toBeNull();
+        expect(statusDot.className).toContain('green');
+      });
+    });
+  });
+});
+
+// ============================================================
+//  Describe: Drag Resize Handle
+//  PANEL-06, D-04, D-05 — 4px handle, 300-700px range, width/position fixed
+// ============================================================
+
+describe('Drag Resize Handle', function () {
+  beforeEach(function () {
+    chrome.storage.local._reset();
+    jest.clearAllMocks();
+    ['.goby-floating-ball', '.goby-panel-container', '#goby-panel-host']
+      .forEach(function (sel) {
+        var list = document.querySelectorAll(sel);
+        list.forEach(function (el) {
+          if (el && el.parentNode) el.parentNode.removeChild(el);
+        });
+      });
+  });
+
+  it('has a 4px resize handle at the bottom of the panel', function () {
+    return GobyPanel.init().then(function () {
+      return GobyPanel.show().then(function () {
+        var host = document.getElementById('goby-panel-host');
+        var sr = host.shadowRoot;
+        var handle = sr.querySelector('.goby-resize-handle');
+        expect(handle).not.toBeNull();
+        expect(handle.style.height).toBe('4px');
+        expect(handle.style.cursor).toBe('ns-resize');
+      });
+    });
+  });
+
+  it('resizes panel height on mousedown + mousemove + mouseup', function () {
+    return GobyPanel.init().then(function () {
+      return GobyPanel.show().then(function () {
+        var host = document.getElementById('goby-panel-host');
+        var sr = host.shadowRoot;
+        var panel = sr.querySelector('.goby-panel');
+        var handle = sr.querySelector('.goby-resize-handle');
+        expect(panel).not.toBeNull();
+        expect(handle).not.toBeNull();
+
+        // Set initial height
+        panel.style.height = '480px';
+        var initialHeight = parseInt(panel.style.height, 10);
+
+        // Simulate mousedown on the handle
+        var mousedownEvent = new MouseEvent('mousedown', { clientY: 100, bubbles: true });
+        handle.dispatchEvent(mousedownEvent);
+
+        // Simulate mousemove on document (drag down 50px)
+        var mousemoveEvent = new MouseEvent('mousemove', { clientY: 150, bubbles: true });
+        document.dispatchEvent(mousemoveEvent);
+
+        // Simulate mouseup on document
+        var mouseupEvent = new MouseEvent('mouseup', { bubbles: true });
+        document.dispatchEvent(mouseupEvent);
+
+        // Height should have increased by ~50px
+        var newHeight = parseInt(panel.style.height, 10);
+        expect(newHeight).toBeGreaterThanOrEqual(initialHeight + 45);
+        expect(newHeight).toBeLessThanOrEqual(initialHeight + 55);
+      });
+    });
+  });
+
+  it('clamps minimum panel height to 300px', function () {
+    return GobyPanel.init().then(function () {
+      return GobyPanel.show().then(function () {
+        var host = document.getElementById('goby-panel-host');
+        var sr = host.shadowRoot;
+        var panel = sr.querySelector('.goby-panel');
+        var handle = sr.querySelector('.goby-resize-handle');
+        expect(panel).not.toBeNull();
+        expect(handle).not.toBeNull();
+
+        // Set initial height
+        panel.style.height = '480px';
+
+        // Simulate mousedown then extreme drag up (well past 300px)
+        handle.dispatchEvent(new MouseEvent('mousedown', { clientY: 500, bubbles: true }));
+        document.dispatchEvent(new MouseEvent('mousemove', { clientY: 50, bubbles: true }));
+        document.dispatchEvent(new MouseEvent('mouseup', { bubbles: true }));
+
+        var height = parseInt(panel.style.height, 10);
+        expect(height).toBeGreaterThanOrEqual(300);
+      });
+    });
+  });
+
+  it('clamps maximum panel height to 700px', function () {
+    return GobyPanel.init().then(function () {
+      return GobyPanel.show().then(function () {
+        var host = document.getElementById('goby-panel-host');
+        var sr = host.shadowRoot;
+        var panel = sr.querySelector('.goby-panel');
+        var handle = sr.querySelector('.goby-resize-handle');
+        expect(panel).not.toBeNull();
+        expect(handle).not.toBeNull();
+
+        // Set initial height
+        panel.style.height = '480px';
+
+        // Simulate mousedown then extreme drag down (well past 700px)
+        handle.dispatchEvent(new MouseEvent('mousedown', { clientY: 100, bubbles: true }));
+        document.dispatchEvent(new MouseEvent('mousemove', { clientY: 800, bubbles: true }));
+        document.dispatchEvent(new MouseEvent('mouseup', { bubbles: true }));
+
+        var height = parseInt(panel.style.height, 10);
+        expect(height).toBeLessThanOrEqual(700);
+      });
+    });
+  });
+
+  it('does not change panel width during resize (remains 400px)', function () {
+    return GobyPanel.init().then(function () {
+      return GobyPanel.show().then(function () {
+        var host = document.getElementById('goby-panel-host');
+        var sr = host.shadowRoot;
+        var panel = sr.querySelector('.goby-panel');
+        var handle = sr.querySelector('.goby-resize-handle');
+        expect(panel).not.toBeNull();
+        expect(handle).not.toBeNull();
+
+        panel.style.width = '400px';
+        panel.style.height = '480px';
+
+        // Resize
+        handle.dispatchEvent(new MouseEvent('mousedown', { clientY: 100, bubbles: true }));
+        document.dispatchEvent(new MouseEvent('mousemove', { clientY: 200, bubbles: true }));
+        document.dispatchEvent(new MouseEvent('mouseup', { bubbles: true }));
+
+        expect(panel.style.width).toBe('400px');
+      });
+    });
+  });
+
+  it('does not allow horizontal panel movement (position stays bottom-right)', function () {
+    return GobyPanel.init().then(function () {
+      return GobyPanel.show().then(function () {
+        var host = document.getElementById('goby-panel-host');
+        var sr = host.shadowRoot;
+        var panel = sr.querySelector('.goby-panel');
+        var handle = sr.querySelector('.goby-resize-handle');
+        expect(panel).not.toBeNull();
+        expect(handle).not.toBeNull();
+
+        panel.style.height = '480px';
+
+        // Check initial position
+        expect(host.style.right).toBe('20px');
+        expect(host.style.bottom).toBe('80px');
+
+        // Resize should not change position
+        handle.dispatchEvent(new MouseEvent('mousedown', { clientY: 100, bubbles: true }));
+        document.dispatchEvent(new MouseEvent('mousemove', { clientY: 200, bubbles: true }));
+        document.dispatchEvent(new MouseEvent('mouseup', { bubbles: true }));
+
+        expect(host.style.right).toBe('20px');
+        expect(host.style.bottom).toBe('80px');
+      });
+    });
+  });
+});
+
+// ============================================================
 //  Describe: Message Bubble Rendering
 //  PANEL-02, SEC-02
 // ============================================================
