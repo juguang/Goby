@@ -1185,7 +1185,38 @@
         }
       },
       timeout: 15000,
-      execute: function () { return '工具将在后续版本可用'; }
+      execute: function () {
+        // D-06/D-07: 截图前临时隐藏面板（仅 CSS class 切换，不持久化）
+        var host = document.getElementById('goby-panel-host');
+        var panel = null;
+        if (host && host.shadowRoot) {
+          panel = host.shadowRoot.querySelector('.goby-panel');
+          if (panel) {
+            panel.classList.add('goby-panel-hidden');
+            panel.classList.remove('goby-panel-visible');
+          }
+        }
+
+        // D-05: 通过 Service Worker 截图
+        return new Promise(function (resolve) {
+          setTimeout(function () {
+            chrome.runtime.sendMessage({action: 'page-screenshot'}).then(function (dataUrl) {
+              // 截图完成后恢复面板可见性
+              if (panel) {
+                panel.classList.remove('goby-panel-hidden');
+                panel.classList.add('goby-panel-visible');
+              }
+              resolve(dataUrl);
+            }).catch(function (err) {
+              if (panel) {
+                panel.classList.remove('goby-panel-hidden');
+                panel.classList.add('goby-panel-visible');
+              }
+              resolve('Error: 截图失败 - ' + (err.message || '未知错误'));
+            });
+          }, 100); // 100ms 延迟等待隐藏动画
+        });
+      }
     },
     // Phase 3 实现的辅助工具
     {

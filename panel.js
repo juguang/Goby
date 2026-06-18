@@ -516,8 +516,18 @@
       // Bot 消息: marked.parse → DOMPurify.sanitize → innerHTML (SEC-01)
       bubbleDiv.innerHTML = renderMarkdown(content);
     } else {
-      // 用户/工具消息: textContent (SEC-02)
-      bubbleDiv.textContent = content;
+      // D-08: 工具消息若为 data:image/ URL 则渲染为截图缩略图
+      if (role === 'tool' && typeof content === 'string' && content.indexOf('data:image/') === 0) {
+        var thumbImg = document.createElement('img');
+        thumbImg.src = content;
+        thumbImg.style.cssText = 'max-width:200px;max-height:150px;cursor:pointer;border-radius:8px;border:1px solid #e5e7eb;';
+        thumbImg.className = 'goby-screenshot-thumb';
+        // PANEL-09: 点击缩略图打开遮罩（由 Task 3 接续）
+        bubbleDiv.appendChild(thumbImg);
+      } else {
+        // 用户/工具消息: textContent (SEC-02)
+        bubbleDiv.textContent = content;
+      }
     }
     // 内联动画确保 JSDOM 测试可检测（同时 CSS @keyframes 提供真实浏览器支持）
     bubbleDiv.style.animation = 'msgFadeIn 200ms ease-out';

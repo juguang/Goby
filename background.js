@@ -407,6 +407,22 @@
       return handleLLMRequest(message, sendResponse);
     }
 
+    // T-05-03: page-screenshot — 通过 captureVisibleTab 截图
+    if (message.action === 'page-screenshot') {
+      if (!sender.tab) {
+        sendResponse('Error: 无法获取 tabId');
+        return true;
+      }
+      chrome.tabs.captureVisibleTab(sender.tab.windowId, {format: 'png'}, function (dataUrl) {
+        if (chrome.runtime.lastError) {
+          sendResponse('Error: 截图失败 - ' + chrome.runtime.lastError.message);
+        } else {
+          sendResponse(dataUrl);
+        }
+      });
+      return true; // 异步响应 — 保持 sendResponse 通道
+    }
+
     // T-04-04: page-evaluate — 通过 MAIN world 执行 JS (D-07)
     if (message.action === 'page-evaluate') {
       if (!sender.tab) {
