@@ -1144,7 +1144,33 @@
         parameters: { type: 'object', properties: {} }
       },
       timeout: 30000,
-      execute: function () { return '工具将在后续版本可用'; }
+      execute: function () {
+        // D-01: 提取页面 body 的文本内容，限制最长 50000 字符
+        // JSDOM 兼容: innerText || textContent 双模式
+        var pageContent = (document.body.innerText || document.body.textContent || '').substring(0, 50000);
+
+        // 空页面检查
+        if (!pageContent.trim()) {
+          return '页面内容为空，无法分析';
+        }
+
+        // D-03: 构建 messages
+        var messages = [
+          { role: 'system', content: '分析以下页面内容，总结页面的主题、主要内容和结构' },
+          { role: 'user', content: pageContent }
+        ];
+
+        // D-02: 调用非流式 callLLM（同 IIFE 闭包局部函数）
+        // D-04: 提取分析结果字符串
+        return callLLM(messages).then(function (response) {
+          if (response && response.choices && response.choices[0] && response.choices[0].message) {
+            return response.choices[0].message.content || '';
+          }
+          return 'Error: page_analyze 分析失败 - LLM 响应格式异常';
+        }).catch(function (err) {
+          return 'Error: page_analyze 分析失败 - ' + (err.message || '未知错误');
+        });
+      }
     },
     {
       type: 'function',
