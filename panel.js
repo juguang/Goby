@@ -505,6 +505,49 @@
   //  所有用户输入通过 textContent 赋值，绝不使用 innerHTML（SEC-02）
   // ============================================================
 
+  /**
+   * 把容器变成可折叠文本：超长内容显示预览 + 展开按钮
+   * 容器内容会被替换为 span(预览文本) + button(展开/收起)
+   * @param {HTMLElement} container - 接收文本与按钮的元素
+   * @param {string} fullText - 完整文本
+   * @param {number} maxShow - 预览最大字符数
+   */
+  function attachExpandButton(container, fullText, maxShow) {
+    if (typeof fullText !== 'string') fullText = '';
+    while (container.firstChild) container.removeChild(container.firstChild);
+
+    if (fullText.length <= maxShow) {
+      container.textContent = fullText;
+      return;
+    }
+
+    var shortText = fullText.substring(0, maxShow) + '...';
+    var textSpan = document.createElement('span');
+    textSpan.dataset.full = fullText;
+    textSpan.dataset.short = shortText;
+    textSpan.textContent = shortText;
+
+    var btn = document.createElement('button');
+    btn.type = 'button';
+    btn.className = 'goby-tool-expand-btn';
+    btn.textContent = '展开';
+    btn.dataset.expanded = 'false';
+    btn.addEventListener('click', function () {
+      if (btn.dataset.expanded === 'false') {
+        textSpan.textContent = textSpan.dataset.full;
+        btn.textContent = '收起';
+        btn.dataset.expanded = 'true';
+      } else {
+        textSpan.textContent = textSpan.dataset.short;
+        btn.textContent = '展开';
+        btn.dataset.expanded = 'false';
+      }
+    });
+
+    container.appendChild(textSpan);
+    container.appendChild(btn);
+  }
+
   function appendMessage(role, content) {
     if (!_messagesContainer) return;
 
@@ -561,8 +604,11 @@
           showScreenshotOverlay(this.src);
         });
         bubbleDiv.appendChild(thumbImg);
+      } else if (role === 'tool' || role === 'tool-error') {
+        // 工具文本结果：超长则折叠 + 展开按钮
+        attachExpandButton(bubbleDiv, content, 60);
       } else {
-        // 用户/工具消息: textContent (SEC-02)
+        // 用户消息: textContent (SEC-02)
         bubbleDiv.textContent = content;
       }
     }
@@ -611,8 +657,7 @@
 
   /**
    * 更新工具调用状态指示器
-   * 截断结果（>maxShow 字符）时附加展开/收起按钮，点击切换完整文本与预览
-   * 所有用户/LLM 内容通过 textContent 注入，避免 XSS
+   * 截断结果（>60 字符）通过 attachExpandButton 显示预览 + 展开按钮
    * @param {HTMLElement} badgeEl - appendToolCall 返回的元素
    * @param {string} result - 工具执行结果
    */
@@ -620,11 +665,6 @@
     if (!badgeEl) return;
     var isError = typeof result === 'string' && result.startsWith('Error:');
     badgeEl.className = 'goby-tool-call-badge ' + (isError ? 'error' : 'done');
-
-    var maxShow = 60;
-    var raw = (typeof result === 'string') ? result : '';
-    var isTruncated = raw.length > maxShow;
-    var shortResult = isTruncated ? raw.substring(0, maxShow) + '...' : raw;
 
     var prevName = badgeEl.querySelector('.goby-tool-name');
     var nameText = prevName ? prevName.textContent : '';
@@ -638,30 +678,9 @@
 
     var statusEl = document.createElement('span');
     statusEl.className = 'goby-tool-status';
-    statusEl.dataset.full = raw;
-    statusEl.dataset.short = shortResult;
-    statusEl.textContent = shortResult;
     badgeEl.appendChild(statusEl);
 
-    if (isTruncated) {
-      var btn = document.createElement('button');
-      btn.type = 'button';
-      btn.className = 'goby-tool-expand-btn';
-      btn.textContent = '展开';
-      btn.dataset.expanded = 'false';
-      btn.addEventListener('click', function () {
-        if (btn.dataset.expanded === 'false') {
-          statusEl.textContent = statusEl.dataset.full;
-          btn.textContent = '收起';
-          btn.dataset.expanded = 'true';
-        } else {
-          statusEl.textContent = statusEl.dataset.short;
-          btn.textContent = '展开';
-          btn.dataset.expanded = 'false';
-        }
-      });
-      badgeEl.appendChild(btn);
-    }
+    attachExpandButton(statusEl, result, 60);
   }
 
   // ============================================================
