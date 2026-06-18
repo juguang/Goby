@@ -447,12 +447,15 @@
 
   // ============================================================
   //  持久化面板状态到 chrome.storage.local
-  //  键: gobyPanelState — { isVisible: boolean }
+  //  键: gobyPanelState — { isVisible: boolean, autoStart: boolean }
+  //  合并写入 — 保留 autoStart 等其他字段不被覆盖
   // ============================================================
 
   function persistState() {
-    return chrome.storage.local.set({
-      gobyPanelState: { isVisible: state.isVisible }
+    return chrome.storage.local.get(['gobyPanelState']).then(function (result) {
+      var prev = (result && result.gobyPanelState) || {};
+      prev.isVisible = state.isVisible;
+      return chrome.storage.local.set({ gobyPanelState: prev });
     });
   }
 
@@ -1561,31 +1564,15 @@
 
     /**
      * 初始化面板
-     * - 从 chrome.storage.local 读取 gobyPanelState
      * - 创建悬浮球（始终显示）
-     * - 如果之前可见，创建面板并显示
-     * - 加载状态栏数据（模型名、状态点、轮数）
+     * - 面板默认隐藏；要自动展开走 autoStart（content-script.js 检查并调用 show()）
+     * - 不再跨页面恢复 isVisible — 避免一次展开后所有页面都被强制弹出
      * @returns {Promise<void>}
      */
     init: function () {
-      return chrome.storage.local.get(['gobyPanelState']).then(function (result) {
-        var panelState = result.gobyPanelState || {};
-        state.isVisible = panelState.isVisible === true;
-
-        // 始终创建悬浮球
+      return chrome.storage.local.get(['gobyPanelState']).then(function () {
+        state.isVisible = false;
         createFloatingBall();
-
-        // 如果之前可见，创建面板
-        if (state.isVisible) {
-          createPanelShell();
-
-          // 初始状态同步更新
-          updateConnectionStatus('gray');
-          updateRoundCount(0);
-
-          // 加载模型名 — 链入 promise 确保 init().then() 执行时模型名已就绪
-          return loadModelName();
-        }
       });
     },
 
