@@ -1535,17 +1535,46 @@
 
   /**
    * compactConversationAsync — 当 token 达到 180K 时触发 LLM 摘要压缩
-   * 保留最近 3 条消息，将更早的消息发给 callLLM 做摘要
+   * 保留最近 N 条消息，并确保 tool 消息与其前面的 assistant tool_calls 配对完整
    */
   function compactConversationAsync() {
     if (_agentState.messages.length <= 3) {
       return Promise.resolve();
     }
 
-    // 保留最近 3 条，压缩更早的消息
+    // 保留最近 N 条，向前扩展确保 tool↔assistant_tool_calls 配对不割裂
     var keepCount = 3;
-    var compactMsgs = _agentState.messages.slice(0, _agentState.messages.length - keepCount);
-    var recentMsgs = _agentState.messages.slice(_agentState.messages.length - keepCount);
+    var splitIdx = _agentState.messages.length - keepCount;
+
+    // 扫描保留区的 tool 消息，若其配对的 assistant tool_calls 在压缩区，则扩展分割点
+    for (var si = splitIdx; si < _agentState.messages.length; si++) {
+      var msg = _agentState.messages[si];
+      if (msg.role === 'tool' && msg.tool_call_id) {
+        for (var ai = si - 1; ai >= 0; ai--) {
+          var prev = _agentState.messages[ai];
+          if (prev.role === 'assistant' && prev.tool_calls) {
+            var tcs = Array.isArray(prev.tool_calls) ? prev.tool_calls : [];
+            for (var tci = 0; tci < tcs.length; tci++) {
+              if (tcs[tci].id === msg.tool_call_id && ai < splitIdx) {
+                splitIdx = ai;
+              }
+            }
+            break;
+          }
+        }
+      }
+    }
+
+    var compactMsgs = _agentState.messages.slice(0, splitIdx);
+    var recentMsgs = _agentState.messages.slice(splitIdx);
+
+    // 清理 compactMsgs 末尾悬空的 assistant tool_calls（其 tool 结果在 recentMsgs 中）
+    compactMsgs = stripDanglingToolCalls(compactMsgs);
+
+    // 如果 compactMsgs 为空则跳过压缩
+    if (compactMsgs.length === 0) {
+      return Promise.resolve();
+    }
 
     var summaryPrompt = [
       { role: 'system', content: '请总结以下对话的关键信息，包括用户的需求、已完成的步骤和当前状态' }
