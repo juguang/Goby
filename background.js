@@ -279,7 +279,7 @@
       }).then(function (result) {
         if (!result) return; // 错误已处理
 
-        // 流结束 — 发送 done 消息
+        // 流结束 — 发送 done 消息（含 tool_calls）
         chrome.tabs.sendMessage(tabId, {
           action: 'stream-chunk',
           data: {
@@ -288,7 +288,8 @@
             done: true,
             message: {
               role: 'assistant',
-              content: result.content
+              content: result.content,
+              tool_calls: result.toolCalls || null
             }
           }
         });

@@ -1,5 +1,7 @@
 // Goby - AI 浏览器助手 | Content Script — 消息监听 + 面板注入 + 设置模态框
 // Plan 01-03: 面板浮层注入、消息转发、设置模态框（PANEL-07）
+// Plan 03-01: 流式 LLM 调用、安全渲染管道、回退机制（AGENT-02/03/04/06）
+// Plan 03-02: Agent 主循环、工具执行引擎、限制保护（AGENT-01/05）
 // 依赖: storage.js, panel.js（通过 manifest content_scripts 顺序注入）
 
 (function () {
@@ -542,8 +544,8 @@
   window.closeSettingsModal = closeSettingsModal;
 
   // ================================================================
-  //  GobyAgent — Agent 消息模块 (Plan 03-01)
-  //  LLM 流式/非流式调用、安全渲染管道、回退机制
+  //  GobyAgent — Agent 消息模块 (Plan 03-01 + 03-02)
+  //  LLM 流式/非流式调用、安全渲染管道、Agent 循环、工具执行、限制保护
   //  依赖: GobyStorage, GobyPanel, DOMPurify, marked
   // ================================================================
 
@@ -552,10 +554,23 @@
     messages: [],
     isProcessing: false,
     connectionStatus: 'gray',
-    activeOrigin: ''
+    activeOrigin: '',
+    toolCallCounter: 0      // 会话工具调用计数（AGENT-05 限制保护）
   };
 
-  // ---- SYSTEM_PROMPT (AGENT-04, D-07, ~80 行中文) ----
+  // ---- Agent 循环内部状态 ----
+  var _streamResolve = null;       // callLLMStream Promise resolve
+  var _streamReject = null;        // callLLMStream Promise reject
+  var _toolCallFailCounts = {};    // 工具失败计数（同会话内持久）
+
+  // ---- 常量定义（AGENT-05 限制参数） ----
+  var MAX_LOOPS = 15;
+  var MAX_TOOL_CALLS = 50;
+  var MAX_MESSAGES = 20;           // 不含 system prompt
+  var TOKEN_LIMIT = 180000;
+  var TOOL_TIMEOUT = 15000;
+
+  // ---- SYSTEM_PROMPT (AGENT-04, D-07) ----
   var SYSTEM_PROMPT = '你叫 Goby，是一个 AI 浏览器自动化助手。你可以使用工具来操作当前页面，用中文回答用户。\n' +
     '工具使用原则：\n' +
     '1. 先查后做 — 不确定页面结构时，先用 page_list_elements 或 page_query\n' +
@@ -579,6 +594,301 @@
     '- clipboard_read: 读取剪贴板\n' +
     '- clipboard_write: 写入剪贴板\n' +
     '- get_current_time: 获取当前时间';
+
+  // ---- 15 个工具定义 (GOBY_DESIGN.md §四) ----
+  // Phase 3 实现 4 个简单工具，其余返回占位消息
+  var nativeTools = [
+    // 页面查询工具
+    {
+      type: 'function',
+      function: {
+        name: 'page_query',
+        description: '使用 CSS 选择器查询页面元素的内容（text/value/html/attributes/all）',
+        parameters: {
+          type: 'object',
+          properties: {
+            selector: { type: 'string', description: 'CSS 选择器' },
+            property: { type: 'string', description: '要提取的属性: text/value/html/attributes/all', default: 'text' },
+            index: { type: 'number', description: '匹配元素的索引', default: 0 }
+          },
+          required: ['selector']
+        }
+      },
+      timeout: 15000,
+      execute: function () { return '工具将在后续版本可用'; }
+    },
+    {
+      type: 'function',
+      function: {
+        name: 'page_list_elements',
+        description: '列出页面上所有交互元素（inputs/buttons/links/selects/checkboxes/radios）',
+        parameters: {
+          type: 'object',
+          properties: {
+            type: { type: 'string', description: '元素类型: all/inputs/buttons/links/selects/checkboxes/radios', default: 'all' }
+          }
+        }
+      },
+      timeout: 15000,
+      execute: function () { return '工具将在后续版本可用'; }
+    },
+    {
+      type: 'function',
+      function: {
+        name: 'page_wait',
+        description: '等待元素出现或等待指定时间',
+        parameters: {
+          type: 'object',
+          properties: {
+            selector: { type: 'string', description: 'CSS 选择器（可选，如果提供则等待元素出现）' },
+            timeout: { type: 'number', description: '最长等待毫秒数', default: 5000 },
+            time: { type: 'number', description: '直接等待的秒数（不提供 selector 时）' }
+          }
+        }
+      },
+      timeout: 30000,
+      execute: function () { return '工具将在后续版本可用'; }
+    },
+    {
+      type: 'function',
+      function: {
+        name: 'page_evaluate',
+        description: '在页面主世界中执行 JavaScript 表达式',
+        parameters: {
+          type: 'object',
+          properties: {
+            expression: { type: 'string', description: '要执行的 JavaScript 代码' }
+          },
+          required: ['expression']
+        }
+      },
+      timeout: 15000,
+      execute: function () { return '工具将在后续版本可用'; }
+    },
+    // 页面操作工具
+    {
+      type: 'function',
+      function: {
+        name: 'page_fill',
+        description: '填写表单输入框的值',
+        parameters: {
+          type: 'object',
+          properties: {
+            selector: { type: 'string', description: 'CSS 选择器' },
+            value: { type: 'string', description: '要填写的值' },
+            index: { type: 'number', description: '匹配元素的索引', default: 0 }
+          },
+          required: ['selector', 'value']
+        }
+      },
+      timeout: 15000,
+      execute: function () { return '工具将在后续版本可用'; }
+    },
+    {
+      type: 'function',
+      function: {
+        name: 'page_click',
+        description: '点击页面元素',
+        parameters: {
+          type: 'object',
+          properties: {
+            selector: { type: 'string', description: 'CSS 选择器' },
+            index: { type: 'number', description: '匹配元素的索引', default: 0 }
+          },
+          required: ['selector']
+        }
+      },
+      timeout: 15000,
+      execute: function () { return '工具将在后续版本可用'; }
+    },
+    {
+      type: 'function',
+      function: {
+        name: 'page_check',
+        description: '勾选或取消复选框',
+        parameters: {
+          type: 'object',
+          properties: {
+            selector: { type: 'string', description: 'CSS 选择器' },
+            checked: { type: 'boolean', description: 'true=勾选, false=取消', default: true },
+            index: { type: 'number', description: '匹配元素的索引', default: 0 }
+          },
+          required: ['selector', 'checked']
+        }
+      },
+      timeout: 15000,
+      execute: function () { return '工具将在后续版本可用'; }
+    },
+    {
+      type: 'function',
+      function: {
+        name: 'page_select',
+        description: '选择下拉选项',
+        parameters: {
+          type: 'object',
+          properties: {
+            selector: { type: 'string', description: 'CSS 选择器' },
+            value: { type: 'string', description: '选择的值' },
+            text: { type: 'string', description: '选项显示的文本' }
+          },
+          required: ['selector']
+        }
+      },
+      timeout: 15000,
+      execute: function () { return '工具将在后续版本可用'; }
+    },
+    {
+      type: 'function',
+      function: {
+        name: 'page_submit',
+        description: '提交表单',
+        parameters: {
+          type: 'object',
+          properties: {
+            selector: { type: 'string', description: '表单的 CSS 选择器' }
+          },
+          required: ['selector']
+        }
+      },
+      timeout: 15000,
+      execute: function () { return '工具将在后续版本可用'; }
+    },
+    // 分析工具
+    {
+      type: 'function',
+      function: {
+        name: 'page_analyze',
+        description: '分析当前页面的内容和主题（提取页面内容 + LLM 分析）',
+        parameters: { type: 'object', properties: {} }
+      },
+      timeout: 30000,
+      execute: function () { return '工具将在后续版本可用'; }
+    },
+    {
+      type: 'function',
+      function: {
+        name: 'page_screenshot',
+        description: '截取当前页面的截图',
+        parameters: {
+          type: 'object',
+          properties: {
+            includePanel: { type: 'boolean', description: '是否包含 Goby 面板', default: false }
+          }
+        }
+      },
+      timeout: 15000,
+      execute: function () { return '工具将在后续版本可用'; }
+    },
+    // Phase 3 实现的辅助工具
+    {
+      type: 'function',
+      function: {
+        name: 'calculator',
+        description: '执行数学计算（支持 + - * / % ( ) 和 Math 函数）',
+        parameters: {
+          type: 'object',
+          properties: {
+            expression: { type: 'string', description: '数学表达式，如 "2+2" 或 "Math.sqrt(16)"' }
+          },
+          required: ['expression']
+        }
+      },
+      timeout: 15000,
+      execute: function (args) {
+        // T-03-08: 安全验证后 eval — 仅允许数学表达式
+        var expr = (args && args.expression) || '';
+        expr = expr.trim();
+        if (!expr) return 'Error: 表达式为空';
+
+        // 正则验证：只允许数字、运算符、括号、小数点、空白、Math 函数
+        // 拒绝任何字母（除 Math.xxx 函数调用）
+        var sanitized = expr.replace(/\s/g, '');
+        // 允许: 数字, +, -, *, /, %, (, ), ., `,`, Math.xxx (字母)
+        // 检查是否有非法字符（除了数字、运算符、括号、小数点、逗号、Math 调用）
+        if (!/^[\d+\-*/().,%]+$/.test(sanitized)) {
+          // 检查是否是 Math.xxx 调用格式
+          var mathPattern = /^(Math\.\w+\([\d+\-*/().,%]+\)[\d+\-*/().,%]*)+$/;
+          if (!mathPattern.test(sanitized)) {
+            return 'Error: 不支持的表达式格式';
+          }
+        }
+        try {
+          // eslint-disable-next-line no-eval
+          var result = eval(expr);
+          if (typeof result !== 'number' || !isFinite(result)) {
+            return 'Error: 计算结果无效';
+          }
+          return '计算结果: ' + result;
+        } catch (e) {
+          return 'Error: 计算失败 - ' + e.message;
+        }
+      }
+    },
+    {
+      type: 'function',
+      function: {
+        name: 'clipboard_read',
+        description: '读取剪贴板内容',
+        parameters: { type: 'object', properties: {} }
+      },
+      timeout: 5000,
+      execute: function () {
+        try {
+          var textarea = document.createElement('textarea');
+          document.body.appendChild(textarea);
+          textarea.focus();
+          document.execCommand('paste');
+          var content = textarea.value;
+          document.body.removeChild(textarea);
+          return content || '（剪贴板为空）';
+        } catch (e) {
+          return 'Error: 读取剪贴板失败 - ' + e.message;
+        }
+      }
+    },
+    {
+      type: 'function',
+      function: {
+        name: 'clipboard_write',
+        description: '写入文本到剪贴板',
+        parameters: {
+          type: 'object',
+          properties: {
+            text: { type: 'string', description: '要写入的文本' }
+          },
+          required: ['text']
+        }
+      },
+      timeout: 5000,
+      execute: function (args) {
+        // T-03-09: 仅写入 text/plain
+        try {
+          var textarea = document.createElement('textarea');
+          textarea.value = (args && args.text) || '';
+          document.body.appendChild(textarea);
+          textarea.select();
+          document.execCommand('copy');
+          document.body.removeChild(textarea);
+          return '已写入剪贴板（' + (args && args.text ? args.text.length : 0) + ' 字符）';
+        } catch (e) {
+          return 'Error: 写入剪贴板失败 - ' + e.message;
+        }
+      }
+    },
+    {
+      type: 'function',
+      function: {
+        name: 'get_current_time',
+        description: '获取当前日期和时间（北京时间）',
+        parameters: { type: 'object', properties: {} }
+      },
+      timeout: 5000,
+      execute: function () {
+        var now = new Date();
+        return '当前时间: ' + now.toLocaleString('zh-CN', { timeZone: 'Asia/Shanghai' });
+      }
+    }
+  ];
 
   /**
    * renderMarkdown — 安全渲染管道 (SEC-01, D-20/D-21/D-22)
@@ -629,24 +939,38 @@
   /**
    * callLLMStream — 流式 LLM 调用 (AGENT-02, D-01/D-02/D-04)
    * 通过 Service Worker 转发 SSE 流，逐 chunk 回调
+   * 返回 Promise，在流完成时 resolve {content, tool_calls}
    * @param {Array} messages - 对话消息数组
    * @param {function} onChunk - 逐 chunk 回调(text, done)
+   * @returns {Promise<{content: string, tool_calls: object|null}>}
    */
   function callLLMStream(messages, onChunk) {
     // D-23: 直接从 storage 读取配置，不经过 postMessage
     return GobyStorage.getConfig().then(function (cfg) {
-      _agentState.isProcessing = true;
       _agentState.connectionStatus = 'green';
       GobyPanel.updateConnectionStatus('green');
 
-      // 构造 tools 参数（Plan 03-02 实现完整工具定义）
-      var tools = [];
+      // 构造 tools 参数（使用 nativeTools 的 function schema）
+      var tools = nativeTools.map(function (t) {
+        return { type: 'function', function: t.function };
+      });
 
-      // 发送 llm-stream 到 Service Worker
-      return chrome.runtime.sendMessage({
-        action: 'llm-stream',
-        messages: messages,
-        tools: tools
+      // 返回 Promise，在流完成时通过 _streamResolve 回调 resolve
+      return new Promise(function (resolve, reject) {
+        _streamResolve = resolve;
+        _streamReject = reject;
+
+        // 发送 llm-stream 到 Service Worker
+        // 使用 Promise.resolve 包装以兼容未返回 Promise 的 mock 环境
+        Promise.resolve(chrome.runtime.sendMessage({
+          action: 'llm-stream',
+          messages: messages,
+          tools: tools
+        })).catch(function (err) {
+          reject(err);
+          _streamResolve = null;
+          _streamReject = null;
+        });
       });
     });
   }
@@ -668,6 +992,341 @@
     });
   }
 
+  // ================================================================
+  //  Token 估算 (GOBY_DESIGN.md §十三 13.1)
+  // ================================================================
+
+  /**
+   * estimateTokens — Token 估算函数
+   * 中文 ≈ 0.5 token/字（charCode > 127）
+   * 英文 ≈ 0.25 token/字（charCode <= 127）
+   * @param {string} text
+   * @returns {number} 预估 token 数
+   */
+  function estimateTokens(text) {
+    if (!text) return 0;
+    var chinese = 0, ascii = 0;
+    for (var i = 0; i < text.length; i++) {
+      text.charCodeAt(i) > 127 ? chinese++ : ascii++;
+    }
+    return Math.ceil(chinese / 2) + Math.ceil(ascii / 4) + 5;
+  }
+
+  // ================================================================
+  //  消息数量限制 (AGENT-05, D-14)
+  // ================================================================
+
+  /**
+   * enforceMessageLimit — 消息历史保留最近 MAX_MESSAGES 条
+   * 保留 system prompt（messages[0]）+ 最近 20 条用户/助手/工具消息
+   */
+  function enforceMessageLimit() {
+    if (_agentState.messages.length > MAX_MESSAGES) {
+      var excess = _agentState.messages.length - MAX_MESSAGES;
+      _agentState.messages.splice(0, excess);
+    }
+  }
+
+  // ================================================================
+  //  对话压缩 (AGENT-05, D-15)
+  // ================================================================
+
+  /**
+   * compactConversationAsync — 当 token 达到 180K 时触发 LLM 摘要压缩
+   * 保留最近 3 条消息，将更早的消息发给 callLLM 做摘要
+   */
+  function compactConversationAsync() {
+    if (_agentState.messages.length <= 3) {
+      return Promise.resolve();
+    }
+
+    // 保留最近 3 条，压缩更早的消息
+    var keepCount = 3;
+    var compactMsgs = _agentState.messages.slice(0, _agentState.messages.length - keepCount);
+    var recentMsgs = _agentState.messages.slice(_agentState.messages.length - keepCount);
+
+    var summaryPrompt = [
+      { role: 'system', content: '请总结以下对话的关键信息，包括用户的需求、已完成的步骤和当前状态' }
+    ].concat(compactMsgs);
+
+    return Promise.resolve().then(function () {
+      return callLLM(summaryPrompt);
+    }).then(function (response) {
+      var summary = '';
+      if (response && response.choices && response.choices[0] && response.choices[0].message) {
+        summary = response.choices[0].message.content || '';
+      }
+
+      // 将摘要替换为第一条消息
+      var summaryMsg = { role: 'system', content: '【对话摘要】' + summary };
+      _agentState.messages = [summaryMsg].concat(recentMsgs);
+
+      // 渲染摘要消息到面板
+      GobyPanel.appendMessage('bot', '【对话摘要】' + summary);
+    }).catch(function () {
+      // 压缩失败 — 不影响继续对话
+    });
+  }
+
+  // ================================================================
+  //  工具执行引擎 (GOBY_DESIGN.md §十六)
+  // ================================================================
+
+  /**
+   * executeToolCall — 单工具执行
+   * @param {{id: string, function: {name: string, arguments: object|string}}} toolCall
+   * @returns {string|Promise<string>} 工具执行结果
+   */
+  function executeToolCall(toolCall) {
+    // T-03-07: 安全解析 arguments
+    var args = toolCall.function.arguments || {};
+    if (typeof args === 'string') {
+      try {
+        args = JSON.parse(args);
+      } catch (e) {
+        return 'Error: 工具参数解析失败';
+      }
+    }
+
+    // 在 nativeTools 中查找匹配的工具
+    var toolDef = nativeTools.find(function (t) {
+      return t.function.name === toolCall.function.name;
+    });
+
+    if (!toolDef) {
+      return 'Error: 未知工具 ' + toolCall.function.name;
+    }
+
+    try {
+      var result = toolDef.execute(args);
+      return result;
+    } catch (e) {
+      return 'Error: ' + (e.message || '执行失败');
+    }
+  }
+
+  /**
+   * executeWithTimeout — 带超时和重试的工具执行 (AGENT-05, D-12/D-13)
+   * 使用 Promise.race + setTimeout 实现超时
+   * 单工具最多 3 次尝试，每次超时 15s
+   * 连续 3 次失败返回跳过消息
+   * @param {{id: string, type: string, function: {name: string, arguments: object|string}}} toolCall
+   * @returns {Promise<string>}
+   */
+  function executeWithTimeout(toolCall) {
+    var toolName = toolCall.function.name;
+    var timeout = TOOL_TIMEOUT;
+
+    // 查找工具特定超时
+    var toolDef = nativeTools.find(function (t) {
+      return t.function.name === toolName;
+    });
+    if (toolDef && toolDef.timeout) {
+      timeout = toolDef.timeout;
+    }
+
+    var maxRetries = 3;
+
+    // 使用自调用 async 函数以支持循环中的 await
+    return new Promise(function (resolve) {
+      var attemptLoop = function (attempt) {
+        if (attempt >= maxRetries) {
+          // 所有重试均失败 — 返回跳过消息
+          resolve('已跳过（连续失败' + maxRetries + '次）');
+          return;
+        }
+
+        var timeoutId = null;
+
+        Promise.race([
+          Promise.resolve().then(function () {
+            return executeToolCall(toolCall);
+          }),
+          new Promise(function (_, reject) {
+            timeoutId = setTimeout(function () {
+              reject(new Error('工具执行超时（' + (timeout / 1000) + '秒）'));
+            }, timeout);
+          })
+        ]).then(function (result) {
+          if (timeoutId) clearTimeout(timeoutId);
+          // 检查是否是错误结果
+          if (typeof result === 'string' && result.startsWith('Error:')) {
+            // 继续重试
+            attemptLoop(attempt + 1);
+          } else {
+            // 执行成功 — 返回结果
+            resolve(result);
+          }
+        }).catch(function () {
+          if (timeoutId) clearTimeout(timeoutId);
+          // 超时或异常 — 继续重试
+          attemptLoop(attempt + 1);
+        });
+      };
+
+      attemptLoop(0);
+    });
+  }
+
+  // ================================================================
+  //  工具结果管理 (D-06)
+  // ================================================================
+
+  /**
+   * pushResultsToMessages — 将工具执行结果追加到消息历史和面板
+   * @param {Array<{tool_call_id: string, name: string, content: string}>} results
+   */
+  function pushResultsToMessages(results) {
+    for (var i = 0; i < results.length; i++) {
+      var r = results[i];
+
+      // 追加到消息历史
+      _agentState.messages.push({
+        role: 'tool',
+        tool_call_id: r.tool_call_id,
+        name: r.name,
+        content: r.content
+      });
+
+      // 渲染到面板
+      var isError = typeof r.content === 'string' && r.content.startsWith('Error:');
+      GobyPanel.appendMessage(isError ? 'tool-error' : 'tool', r.content);
+    }
+  }
+
+  // ================================================================
+  //  Agent 主循环 — processAgentMessage (AGENT-01, D-05)
+  // ================================================================
+
+  /**
+   * processAgentMessage — Agent 主循环
+   * 使用 while 迭代（非递归），最大 15 轮
+   * 路由文本回复 vs 工具调用
+   * @param {string} userText - 用户消息文本
+   */
+  async function processAgentMessage(userText) {
+    if (_agentState.isProcessing) return;
+    _agentState.isProcessing = true;
+    _agentState.connectionStatus = 'green';
+    GobyPanel.updateConnectionStatus('green');
+
+    // 重置工具失败计数（跨轮次累计，但重置前需保留已有计数）
+    // 注意：_toolCallFailCounts 保留，在 executeWithTimeout 中连续 3 次失败会跳过
+
+    // 追加用户消息到消息历史（面板已由 panel.js 渲染）
+    _agentState.messages.push({ role: 'user', content: userText });
+
+    var loopCount = 0;
+    var loopExitedByLimit = false;
+
+    while (loopCount < MAX_LOOPS) {
+      // 更新状态栏轮数
+      GobyPanel.updateRoundCount(loopCount + 1);
+
+      // 消息数量限制
+      enforceMessageLimit();
+
+      // 构建完整消息数组（含 system prompt）
+      var messages = [
+        { role: 'system', content: SYSTEM_PROMPT }
+      ].concat(_agentState.messages);
+
+      // 检查 token 限制
+      var totalTokens = 0;
+      for (var i = 0; i < messages.length; i++) {
+        totalTokens += estimateTokens(messages[i].content || '');
+      }
+      if (totalTokens >= TOKEN_LIMIT) {
+        await compactConversationAsync();
+        // 压缩后重新构建消息
+        messages = [
+          { role: 'system', content: SYSTEM_PROMPT }
+        ].concat(_agentState.messages);
+      }
+
+      // 调用 LLM 流式接口
+      var response;
+      try {
+        response = await callLLMStream(messages, function (text, done, error) {
+          // 流式文本渲染由 handleStreamChunk 处理
+        });
+      } catch (err) {
+        // LLM 调用失败 — 显示错误并退出
+        _agentState.messages.push({
+          role: 'assistant',
+          content: '请求失败: ' + (err.message || '未知错误')
+        });
+        GobyPanel.appendMessage('bot', '请求失败: ' + (err.message || '未知错误'));
+        break;
+      }
+
+      // 检查是否有工具调用
+      if (response && response.tool_calls) {
+        var results = [];
+        var tcKeys = Object.keys(response.tool_calls);
+
+        for (var j = 0; j < tcKeys.length; j++) {
+          var tc = response.tool_calls[tcKeys[j]];
+
+          // T-03-10: 检查会话总工具调用上限
+          if (_agentState.toolCallCounter >= MAX_TOOL_CALLS) {
+            results.push({
+              tool_call_id: tc.id || '',
+              name: tc.function.name || '',
+              content: 'Error: 会话工具调用次数已达上限（' + MAX_TOOL_CALLS + '次），请新建会话继续操作'
+            });
+            break;
+          }
+          _agentState.toolCallCounter++;
+
+          // 执行工具（带超时和重试）
+          var resultContent = await executeWithTimeout({
+            id: tc.id,
+            type: tc.type || 'function',
+            function: {
+              name: tc.function.name,
+              arguments: tc.function.arguments
+            }
+          });
+
+          results.push({
+            tool_call_id: tc.id || '',
+            name: tc.function.name || '',
+            content: resultContent
+          });
+        }
+
+        // 推送工具结果
+        pushResultsToMessages(results);
+
+        loopCount++;
+
+        // 检查是否达到最大轮数
+        if (loopCount >= MAX_LOOPS) {
+          var limitMsg = '无法完成请求：已达到最大对话轮数（' + MAX_LOOPS + '轮）。请尝试简化指令或分步执行。';
+          _agentState.messages.push({ role: 'assistant', content: limitMsg });
+          GobyPanel.appendMessage('bot', limitMsg);
+          loopExitedByLimit = true;
+          break;
+        }
+      } else {
+        // 文本回复 — 已由 handleStreamChunk 完成流式渲染
+        _agentState.messages.push({ role: 'assistant', content: (response && response.content) || '' });
+        break;
+      }
+    }
+
+    // 清理状态
+    _agentState.isProcessing = false;
+    _agentState.connectionStatus = 'gray';
+    GobyPanel.updateConnectionStatus('gray');
+    GobyPanel.updateRoundCount(0);
+
+    // 恢复输入框
+    if (GobyPanel._inputEl) GobyPanel._inputEl.disabled = false;
+    if (GobyPanel._sendBtn) GobyPanel._sendBtn.disabled = false;
+  }
+
   /**
    * sendMessage — 用户消息主入口
    * @param {string} userText
@@ -676,22 +1335,8 @@
     if (_agentState.isProcessing) return;
     if (!userText || !userText.trim()) return;
 
-    // 追加用户消息到面板
-    GobyPanel.appendMessage('user', userText);
-
-    // 更新状态
-    _agentState.messages.push({ role: 'user', content: userText });
-
-    // 构建完整消息数组（含 system prompt）
-    var messages = [
-      { role: 'system', content: SYSTEM_PROMPT }
-    ].concat(_agentState.messages);
-
-    // 发起流式调用 — onChunk 处理 stream-chunk 回调
-    callLLMStream(messages, function (text, done, error) {
-      // 留空 — stream-chunk 由 handleStreamChunk 处理
-      // onChunk 参数为后续 Plan 03-02 Agent 循环预留
-    });
+    // Plan 03-02: 委托 processAgentMessage 执行 Agent 循环
+    processAgentMessage(userText);
   }
 
   /**
@@ -704,32 +1349,49 @@
     // 错误处理
     if (data.type === 'error') {
       _agentState.connectionStatus = 'red';
-      _agentState.isProcessing = false;
       GobyPanel.updateConnectionStatus('red');
       GobyPanel.updateStatusBar({ connectionStatus: 'red' });
       GobyPanel.appendMessage('bot', '请求失败: ' + (data.error ? data.error.message : '未知错误'));
-      // 恢复输入框
-      if (GobyPanel._inputEl) {
-        GobyPanel._inputEl.disabled = false;
+
+      // Agent 循环模式：reject stream promise
+      if (_streamReject) {
+        _streamReject(new Error(data.error ? data.error.message : '未知错误'));
+        _streamReject = null;
+        _streamResolve = null;
+      } else {
+        // 简单流模式：清理状态
+        _agentState.isProcessing = false;
+        if (GobyPanel._inputEl) GobyPanel._inputEl.disabled = false;
       }
       return;
     }
 
     // 流完成
     if (data.done) {
-      _agentState.isProcessing = false;
-      _agentState.connectionStatus = 'green';
+      _agentState.connectionStatus = 'gray';
+      GobyPanel.updateConnectionStatus('gray');
 
       if (window.GobyPanel && typeof window.GobyPanel.appendStreamingChunk === 'function') {
         window.GobyPanel.appendStreamingChunk(data.content || '', true);
       }
 
-      // 更新消息历史
-      _agentState.messages.push({ role: 'assistant', content: data.content || '' });
+      // Agent 循环模式：resolve stream promise with response
+      if (_streamResolve) {
+        var message = data.message || {};
+        _streamResolve({
+          content: message.content || data.content || '',
+          tool_calls: message.tool_calls || null
+        });
+        _streamResolve = null;
+        _streamReject = null;
+      } else {
+        // 简单流模式（非 agent 循环）：直接更新消息历史
+        _agentState.messages.push({ role: 'assistant', content: data.content || '' });
 
-      // 恢复输入框
-      if (GobyPanel._inputEl) {
-        GobyPanel._inputEl.disabled = false;
+        // 恢复输入框
+        if (GobyPanel._inputEl) {
+          GobyPanel._inputEl.disabled = false;
+        }
       }
       return;
     }
@@ -742,12 +1404,25 @@
       return;
     }
 
-    // 工具调用 chunk（Plan 03-02 实现累加器）
+    // 工具调用 chunk（流式 tool_calls 累加 — 由 SW 侧完成累加
+    // 最终通过 done 消息的 message.tool_calls 传递完整数组）
     if (data.type === 'tool_calls') {
-      // 留空 — Plan 03-02
+      // SW 已经完成了 tool_calls 累加，CS 侧只需等待 done 消息
       return;
     }
   }
+
+  // ================================================================
+  //  测试用内部状态访问（仅在测试环境使用）
+  // ================================================================
+
+  window.__gobyInternals = {
+    _agentState: _agentState,
+    _toolCallCounter: function () { return _agentState.toolCallCounter; },
+    setToolCallCounter: function (n) { _agentState.toolCallCounter = n; },
+    getToolCallFailCounts: function () { return _toolCallFailCounts; },
+    setMaxLoops: function (n) { MAX_LOOPS = n; }
+  };
 
   // 暴露 GobyAgent 到全局
   window.GobyAgent = {
@@ -757,7 +1432,12 @@
     renderMarkdown: renderMarkdown,
     getFallbackContent: getFallbackContent,
     handleStreamChunk: handleStreamChunk,
+    processAgentMessage: processAgentMessage,
+    nativeTools: nativeTools,
+    estimateTokens: estimateTokens,
+    compactConversationAsync: compactConversationAsync,
     SYSTEM_PROMPT: SYSTEM_PROMPT,
+    MAX_LOOPS: MAX_LOOPS,
     getState: function () {
       return {
         messages: _agentState.messages.slice(),

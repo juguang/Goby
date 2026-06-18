@@ -54,6 +54,23 @@ describe('LLM Streaming via Service Worker', function () {
     document.querySelectorAll('.goby-floating-ball, #goby-panel-host').forEach(function (el) { el.remove(); });
     // Clean up any mock fetch
     delete global.fetch;
+
+    // Default mock: resolve llm-stream so callLLMStream promises complete
+    chrome.runtime.sendMessage.mockImplementation(function (msg) {
+      if (msg && msg.action === 'llm-stream') {
+        process.nextTick(function () {
+          if (window.GobyAgent && window.GobyAgent.handleStreamChunk) {
+            window.GobyAgent.handleStreamChunk({
+              type: 'done', done: true,
+              content: '',
+              message: { role: 'assistant', content: '' }
+            });
+          }
+        });
+        return Promise.resolve();
+      }
+      return Promise.resolve({});
+    });
   });
 
   // ---------------------------------------------------------------
