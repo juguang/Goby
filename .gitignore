@@ -1,1 +1,4 @@
 # GSD planning artifacts are versioned with the project
+
+# Dependencies
+node_modules/
