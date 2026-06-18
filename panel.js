@@ -310,7 +310,72 @@
     '.goby-messages-container::-webkit-scrollbar-thumb {',
     '  background: #d1d5db;',
     '  border-radius: 4px;',
-    '}'
+    '}',
+    /* Plan 03-03: 会话侧栏 (300px 滑入式) */
+    '.goby-session-sidebar {',
+    '  position: absolute; top: 0; right: 0; bottom: 0;',
+    '  width: 300px;',
+    '  background: #ffffff;',
+    '  box-shadow: -4px 0 20px rgba(0,0,0,0.1);',
+    '  transform: translateX(100%);',
+    '  transition: transform 250ms ease;',
+    '  z-index: 10;',
+    '  display: flex;',
+    '  flex-direction: column;',
+    '}',
+    '.goby-session-sidebar.open {',
+    '  transform: translateX(0);',
+    '}',
+    '.goby-sidebar-header {',
+    '  min-height: 36px; padding: 8px 14px;',
+    '  background: linear-gradient(135deg, #667eea, #764ba2);',
+    '  color: #ffffff; display: flex;',
+    '  align-items: center; justify-content: space-between;',
+    '  font-size: 13px; font-weight: 600;',
+    '  flex-shrink: 0;',
+    '}',
+    '.goby-sidebar-close-btn {',
+    '  background: transparent; border: none; color: #ffffff;',
+    '  cursor: pointer; font-size: 18px; padding: 0; width: 28px; height: 28px;',
+    '  display: flex; align-items: center; justify-content: center;',
+    '  border-radius: 4px;',
+    '}',
+    '.goby-sidebar-close-btn:hover { background: rgba(255,255,255,0.15); }',
+    '.goby-sidebar-search { padding: 8px 12px; position: relative; flex-shrink: 0; }',
+    '.goby-sidebar-search input {',
+    '  width: 100%; padding: 6px 30px 6px 10px; border: 1px solid #e5e7eb;',
+    '  border-radius: 8px; font-size: 12px; outline: none; box-sizing: border-box;',
+    '}',
+    '.goby-sidebar-search input:focus { border-color: #667eea; }',
+    '.goby-search-icon { position: absolute; right: 20px; top: 50%; transform: translateY(-50%); font-size: 12px; }',
+    '.goby-sidebar-list { flex: 1; overflow-y: auto; padding: 4px 8px; }',
+    '.goby-session-item {',
+    '  display: flex; align-items: center; padding: 10px 8px;',
+    '  border-radius: 8px; cursor: pointer; transition: background 0.15s;',
+    '  margin-bottom: 2px;',
+    '}',
+    '.goby-session-item:hover { background: #f3f4f6; }',
+    '.goby-session-item.active { background: rgba(102,126,234,0.08); border-left: 3px solid #667eea; }',
+    '.goby-session-info { flex: 1; min-width: 0; }',
+    '.goby-session-origin { font-size: 13px; font-weight: 600; color: #111827; white-space: nowrap; overflow: hidden; text-overflow: ellipsis; }',
+    '.goby-session-preview { font-size: 11px; color: #6b7280; margin-top: 2px; white-space: nowrap; overflow: hidden; text-overflow: ellipsis; }',
+    '.goby-session-meta { font-size: 10px; color: #9ca3af; margin-top: 2px; }',
+    '.goby-session-delete-btn {',
+    '  background: transparent; border: none; color: #9ca3af; cursor: pointer;',
+    '  font-size: 14px; padding: 4px; flex-shrink: 0; border-radius: 4px;',
+    '  width: 24px; height: 24px; display: flex; align-items: center; justify-content: center;',
+    '}',
+    '.goby-session-delete-btn:hover { color: #ef4444; background: rgba(239,68,68,0.08); }',
+    '.goby-sidebar-footer { padding: 8px 12px; border-top: 1px solid #e5e7eb; flex-shrink: 0; display: flex; flex-direction: column; gap: 6px; }',
+    '.goby-sidebar-new-btn, .goby-sidebar-clear-btn {',
+    '  width: 100%; padding: 8px; border: none; border-radius: 8px;',
+    '  font-size: 12px; cursor: pointer; transition: opacity 0.15s;',
+    '  font-family: -apple-system, BlinkMacSystemFont, "Segoe UI", Roboto, sans-serif;',
+    '}',
+    '.goby-sidebar-new-btn { background: #667eea; color: #ffffff; }',
+    '.goby-sidebar-new-btn:hover { opacity: 0.85; }',
+    '.goby-sidebar-clear-btn { background: transparent; color: #ef4444; border: 1px solid #e5e7eb; }',
+    '.goby-sidebar-clear-btn:hover { background: #fef2f2; }'
   ].join('\n');
 
   // ============================================================
@@ -342,6 +407,10 @@
 
   // 拖拽把手 DOM 引用
   var _resizeHandle = null;
+
+  // Plan 03-03: 会话侧栏函数引用
+  var _toggleSessionSidebar = null;
+  var _renderSessionList = null;
 
   // ============================================================
   //  持久化面板状态到 chrome.storage.local
@@ -565,6 +634,7 @@
     panel.style.width = '400px';
     panel.style.height = '480px';
     panel.style.transition = 'transform 200ms ease, opacity 200ms ease';
+    panel.style.position = 'relative'; // 会话侧栏依赖相对定位
 
     // ---- 标题栏 ----
     var header = document.createElement('div');
@@ -583,7 +653,7 @@
     sessionBtn.className = 'goby-header-btn';
     sessionBtn.textContent = '📋'; // 📋
     sessionBtn.title = '会话列表';
-    // Phase 3 实现会话列表功能，目前无操作
+    // Plan 03-03: toggleSessionSidebar wired below
 
     var settingsBtn = document.createElement('button');
     settingsBtn.id = 'goby-settings-btn';
@@ -716,6 +786,220 @@
     panel.appendChild(inputBar);
     panel.appendChild(statusBar);
     panel.appendChild(resizeHandle);
+
+    // ---- Plan 03-03: 会话侧栏 (300px slide-in, 覆盖模式) ----
+    var sidebar = document.createElement('div');
+    sidebar.className = 'goby-session-sidebar';
+    sidebar.id = 'goby-session-sidebar';
+
+    var sidebarHeader = document.createElement('div');
+    sidebarHeader.className = 'goby-sidebar-header';
+    var sidebarTitle = document.createElement('span');
+    sidebarTitle.textContent = '会话列表';
+    var sidebarCloseBtn = document.createElement('button');
+    sidebarCloseBtn.className = 'goby-sidebar-close-btn';
+    sidebarCloseBtn.textContent = '×'; // ×
+    sidebarHeader.appendChild(sidebarTitle);
+    sidebarHeader.appendChild(sidebarCloseBtn);
+
+    var sidebarSearch = document.createElement('div');
+    sidebarSearch.className = 'goby-sidebar-search';
+    var sidebarSearchInput = document.createElement('input');
+    sidebarSearchInput.type = 'text';
+    sidebarSearchInput.placeholder = '搜索会话...';
+    var sidebarSearchIcon = document.createElement('span');
+    sidebarSearchIcon.className = 'goby-search-icon';
+    sidebarSearchIcon.textContent = '🔍'; // 🔍
+    sidebarSearch.appendChild(sidebarSearchInput);
+    sidebarSearch.appendChild(sidebarSearchIcon);
+
+    var sidebarList = document.createElement('div');
+    sidebarList.className = 'goby-sidebar-list';
+
+    var sidebarFooter = document.createElement('div');
+    sidebarFooter.className = 'goby-sidebar-footer';
+    var sidebarNewBtn = document.createElement('button');
+    sidebarNewBtn.className = 'goby-sidebar-new-btn';
+    sidebarNewBtn.textContent = '+ 新建会话';
+    var sidebarClearBtn = document.createElement('button');
+    sidebarClearBtn.className = 'goby-sidebar-clear-btn';
+    sidebarClearBtn.textContent = '清除所有会话';
+    sidebarFooter.appendChild(sidebarNewBtn);
+    sidebarFooter.appendChild(sidebarClearBtn);
+
+    sidebar.appendChild(sidebarHeader);
+    sidebar.appendChild(sidebarSearch);
+    sidebar.appendChild(sidebarList);
+    sidebar.appendChild(sidebarFooter);
+    panel.appendChild(sidebar);
+
+    // ---- Plan 03-03: 侧栏事件绑定 ----
+    var sidebarOpen = false;
+
+    _toggleSessionSidebar = function () {
+      sidebarOpen = !sidebarOpen;
+      if (sidebarOpen) {
+        sidebar.classList.add('open');
+        _renderSessionList('');
+      } else {
+        sidebar.classList.remove('open');
+      }
+    };
+
+    function formatTimeAgo(timestamp) {
+      var now = Date.now();
+      var diff = now - timestamp;
+      if (diff < 60000) return '刚刚';
+      if (diff < 3600000) return Math.floor(diff / 60000) + ' 分钟前';
+      if (diff < 86400000) return Math.floor(diff / 3600000) + ' 小时前';
+      var days = Math.floor(diff / 86400000);
+      if (days < 30) return days + ' 天前';
+      var date = new Date(timestamp);
+      return date.getFullYear() + '-' + String(date.getMonth() + 1).padStart(2, '0') + '-' + String(date.getDate()).padStart(2, '0');
+    }
+
+    _renderSessionList = function (filterText) {
+      var agent = window.GobyAgent;
+      if (!agent || typeof agent.getAllSessions !== 'function') return;
+
+      agent.getAllSessions().then(function (sessions) {
+        sidebarList.innerHTML = '';
+        var filtered = sessions;
+
+        if (filterText && filterText.trim()) {
+          var ft = filterText.trim().toLowerCase();
+          var originMatch = function (s) {
+            return (s.origin && s.origin.toLowerCase().indexOf(ft) !== -1) ||
+                   (s.title && s.title.toLowerCase().indexOf(ft) !== -1) ||
+                   (s.preview && s.preview.toLowerCase().indexOf(ft) !== -1);
+          };
+          // 低版本浏览器兼容，不使用箭头函数
+          filtered = [];
+          for (var fi = 0; fi < sessions.length; fi++) {
+            if (originMatch(sessions[fi])) {
+              filtered.push(sessions[fi]);
+            }
+          }
+        }
+
+        // 无会话空状态
+        if (filtered.length === 0) {
+          var emptyEl = document.createElement('div');
+          emptyEl.style.cssText = 'text-align:center;padding:40px 16px;color:#9ca3af;font-size:13px;';
+          emptyEl.textContent = '暂无会话';
+          sidebarList.appendChild(emptyEl);
+          return;
+        }
+
+        for (var si = 0; si < filtered.length; si++) {
+          var session = filtered[si];
+          var item = document.createElement('div');
+          item.className = 'goby-session-item';
+          if (session.sessionId === (agent.getState && agent.getState().sessionId)) {
+            item.classList.add('active');
+          }
+          item.setAttribute('data-session-id', session.sessionId);
+          item.setAttribute('data-origin', session.origin || '');
+
+          var info = document.createElement('div');
+          info.className = 'goby-session-info';
+
+          var originEl = document.createElement('div');
+          originEl.className = 'goby-session-origin';
+          try {
+            originEl.textContent = new URL(session.origin || '').hostname;
+          } catch (e) {
+            originEl.textContent = session.origin || '';
+          }
+
+          var previewEl = document.createElement('div');
+          previewEl.className = 'goby-session-preview';
+          previewEl.textContent = session.preview ? '"' + session.preview + '"' : '';
+
+          var metaEl = document.createElement('div');
+          metaEl.className = 'goby-session-meta';
+          metaEl.textContent = (session.messageCount || 0) + ' 条消息 · ' + formatTimeAgo(session.updatedAt || Date.now());
+
+          info.appendChild(originEl);
+          info.appendChild(previewEl);
+          info.appendChild(metaEl);
+
+          var deleteBtn = document.createElement('button');
+          deleteBtn.className = 'goby-session-delete-btn';
+          deleteBtn.textContent = '✕'; // ✕
+          deleteBtn.setAttribute('data-session-id', session.sessionId);
+
+          item.appendChild(info);
+          item.appendChild(deleteBtn);
+          sidebarList.appendChild(item);
+
+          // 会话项点击事件
+          item.addEventListener('click', function (sid) {
+            return function () {
+              if (window.GobyAgent && typeof window.GobyAgent.switchToSession === 'function') {
+                window.GobyAgent.switchToSession(sid).then(function () {
+                  _toggleSessionSidebar(); // 自动关闭侧栏
+                });
+              }
+            };
+          }(session.sessionId));
+
+          // 删除按钮点击事件
+          deleteBtn.addEventListener('click', function (sid) {
+            return function (e) {
+              e.stopPropagation();
+              if (window.confirm('确定删除此会话？')) {
+                if (window.GobyAgent && typeof window.GobyAgent.deleteSession === 'function') {
+                  window.GobyAgent.deleteSession(sid).then(function () {
+                    _renderSessionList(sidebarSearchInput.value || '');
+                  });
+                }
+              }
+            };
+          }(session.sessionId));
+        }
+      });
+    }
+
+    // 侧栏按钮事件
+    sessionBtn.addEventListener('click', function () {
+      _toggleSessionSidebar();
+    });
+
+    sidebarCloseBtn.addEventListener('click', function () {
+      _toggleSessionSidebar();
+    });
+
+    // 搜索 debounce (100ms，兼容测试环境)
+    var _searchTimer = null;
+    sidebarSearchInput.addEventListener('input', function () {
+      if (_searchTimer) clearTimeout(_searchTimer);
+      _searchTimer = setTimeout(function () {
+        _renderSessionList(sidebarSearchInput.value || '');
+      }, 100);
+    });
+
+    // 新建会话按钮
+    sidebarNewBtn.addEventListener('click', function () {
+      var agent = window.GobyAgent;
+      if (agent && typeof agent.createSession === 'function') {
+        var origin = window.location.origin;
+        agent.createSession(origin);
+        _toggleSessionSidebar();
+      }
+    });
+
+    // 清除全部按钮
+    sidebarClearBtn.addEventListener('click', function () {
+      if (window.confirm('确定清除所有会话？')) {
+        var agent = window.GobyAgent;
+        if (agent && typeof agent.deleteAllSessions === 'function') {
+          agent.deleteAllSessions().then(function () {
+            _toggleSessionSidebar();
+          });
+        }
+      }
+    });
 
     // 组装 Shadow DOM
     shadow.appendChild(styleEl);
@@ -1233,6 +1517,27 @@
      */
     updateRoundCount: function (count) {
       updateRoundCount(count);
+    },
+
+    // Plan 03-03: 会话侧栏 API
+
+    /**
+     * 切换会话侧栏显示
+     */
+    toggleSessionSidebar: function () {
+      if (typeof _toggleSessionSidebar === 'function') {
+        _toggleSessionSidebar();
+      }
+    },
+
+    /**
+     * 渲染会话列表（供侧栏搜索使用）
+     * @param {string} text - 搜索过滤文本
+     */
+    renderSessionList: function (text) {
+      if (typeof _renderSessionList === 'function') {
+        _renderSessionList(text || '');
+      }
     }
   };
 

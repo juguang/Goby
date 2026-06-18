@@ -447,7 +447,8 @@ describe('Session Sidebar UI', function () {
     searchInput.value = 'example';
     searchInput.dispatchEvent(new Event('input'));
 
-    await flushMicrotasks();
+    // Wait for debounce (100ms) to fire
+    await new Promise(function (resolve) { setTimeout(resolve, 200); });
 
     // After filtering, only matching sessions should be visible
     var items = shadow.querySelectorAll('.goby-session-item');
@@ -648,6 +649,6 @@ describe('Session Sidebar UI', function () {
     expect(keys.length).toBeGreaterThan(0);
 
     var saved = sessions[keys[0]];
-    expect(saved.preview).toBe('帮我搜索需求文档中关于合同管理的');
+    expect(saved.preview).toBe('帮我搜索需求文档中关于合同管理的部分，我需要找到最新的合同模');
   });
 });
