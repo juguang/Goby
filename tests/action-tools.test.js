@@ -122,11 +122,13 @@ describe('page_fill', function () {
     loadModules();
     var tool = getTool('page_fill');
     var editorEl = document.querySelector('#fill-editor');
+    // Verify element is contenteditable
+    expect(editorEl.getAttribute('contenteditable')).toBe('true');
     // Set initial HTML content
     editorEl.innerHTML = '<p>Old content</p>';
     var result = tool.execute({ selector: '#fill-editor', value: 'New content' });
-    expect(editorEl.innerHTML).toBe('');
-    expect(editorEl.innerText).toBe('New content');
+    // textContent replaces all child nodes (including HTML) with text
+    expect(editorEl.textContent).toBe('New content');
     expect(result).toBe("Filled '#fill-editor' with: New content");
   });
 
@@ -554,6 +556,19 @@ describe('page_select', function () {
 //  page_submit (RED Phase - Task 2: tests will fail on stub)
 // ================================================================
 describe('page_submit', function () {
+  var originalSubmit;
+
+  beforeAll(function () {
+    // JSDOM doesn't implement HTMLFormElement.prototype.submit (throws "Not implemented")
+    // Save original and mock it
+    originalSubmit = HTMLFormElement.prototype.submit;
+    HTMLFormElement.prototype.submit = jest.fn();
+  });
+
+  afterAll(function () {
+    HTMLFormElement.prototype.submit = originalSubmit;
+  });
+
   beforeEach(function () {
     jest.resetModules();
     jest.clearAllMocks();

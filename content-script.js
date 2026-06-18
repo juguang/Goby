@@ -897,9 +897,8 @@
           if (index === -1) {
             for (var fi = 0; fi < elements.length; fi++) {
               var fel = elements[fi];
-              if (fel.isContentEditable) {
-                fel.innerHTML = '';
-                fel.innerText = value;
+              if (fel.isContentEditable || fel.getAttribute('contenteditable') === 'true') {
+                fel.textContent = value;
               } else {
                 fel.value = value;
               }
@@ -914,9 +913,8 @@
           }
 
           var el = elements[index];
-          if (el.isContentEditable) {
-            el.innerHTML = '';
-            el.innerText = value;
+          if (el.isContentEditable || el.getAttribute('contenteditable') === 'true') {
+            el.textContent = value;
           } else {
             el.value = value;
           }
@@ -996,7 +994,46 @@
         }
       },
       timeout: 15000,
-      execute: function () { return '工具将在后续版本可用'; }
+      execute: function (args) {
+        try {
+          var selector = args.selector;
+          var checked = args.checked === true;
+          var index = args.index !== undefined ? args.index : 0;
+          var elements = document.querySelectorAll(selector);
+
+          if (elements.length === 0) {
+            return 'No elements found matching: ' + selector;
+          }
+
+          if (index === -1) {
+            for (var ci = 0; ci < elements.length; ci++) {
+              var cel = elements[ci];
+              if (cel.tagName !== 'INPUT' || cel.type !== 'checkbox') {
+                return 'Element is not a checkbox: ' + selector;
+              }
+              cel.checked = checked;
+              cel.dispatchEvent(new Event('change', { bubbles: true }));
+            }
+            return (checked ? 'Checked' : 'Unchecked') + ' all ' + elements.length + ' elements';
+          }
+
+          if (index >= elements.length) {
+            return 'Index ' + index + ' out of range. Found ' + elements.length + ' elements.';
+          }
+
+          var el = elements[index];
+          if (el.tagName !== 'INPUT' || el.type !== 'checkbox') {
+            return 'Element is not a checkbox: ' + selector;
+          }
+
+          el.checked = checked;
+          el.dispatchEvent(new Event('change', { bubbles: true }));
+
+          return (checked ? 'Checked' : 'Unchecked') + ': ' + selector;
+        } catch (e) {
+          return 'Check failed: ' + e.message;
+        }
+      }
     },
     {
       type: 'function',
@@ -1014,7 +1051,54 @@
         }
       },
       timeout: 15000,
-      execute: function () { return '工具将在后续版本可用'; }
+      execute: function (args) {
+        try {
+          var selector = args.selector;
+          var value = args.value;
+          var text = args.text;
+          var index = args.index !== undefined ? args.index : 0;
+          var elements = document.querySelectorAll(selector);
+
+          if (elements.length === 0) {
+            return 'No elements found matching: ' + selector;
+          }
+
+          if (index >= elements.length) {
+            return 'Index ' + index + ' out of range. Found ' + elements.length + ' elements.';
+          }
+
+          var el = elements[index];
+          if (el.tagName !== 'SELECT') {
+            return 'Element is not a select: ' + selector;
+          }
+
+          if (value !== undefined) {
+            // 按 value 匹配
+            el.value = value;
+            if (el.value === value) {
+              el.dispatchEvent(new Event('change', { bubbles: true }));
+              return "Selected value='" + value + "' on: " + selector;
+            }
+            return "Option with value '" + value + "' not found";
+          }
+
+          if (text !== undefined) {
+            // 按 text 匹配
+            for (var oi = 0; oi < el.options.length; oi++) {
+              if (el.options[oi].text === text) {
+                el.options[oi].selected = true;
+                el.dispatchEvent(new Event('change', { bubbles: true }));
+                return "Selected text='" + text + "' on: " + selector;
+              }
+            }
+            return "Option with text '" + text + "' not found";
+          }
+
+          return 'Error: value or text is required';
+        } catch (e) {
+          return 'Select failed: ' + e.message;
+        }
+      }
     },
     {
       type: 'function',
@@ -1030,7 +1114,26 @@
         }
       },
       timeout: 15000,
-      execute: function () { return '工具将在后续版本可用'; }
+      execute: function (args) {
+        try {
+          var selector = args.selector;
+          var elements = document.querySelectorAll(selector);
+
+          if (elements.length === 0) {
+            return 'No elements found matching: ' + selector;
+          }
+
+          var el = elements[0];
+          if (el.tagName !== 'FORM') {
+            return 'Element is not a form: ' + selector;
+          }
+
+          el.submit();
+          return 'Submitted form: ' + selector;
+        } catch (e) {
+          return 'Submit failed: ' + e.message;
+        }
+      }
     },
     // 分析工具
     {
