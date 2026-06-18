@@ -251,4 +251,43 @@
     }
   });
 
+  // ---- 面板开关（POPUP-03） ----
+  var panelToggle = document.getElementById('panelToggle');
+  if (panelToggle) {
+    // 初始化时检查当前页面面板状态
+    chrome.tabs.query({ active: true, currentWindow: true }, function (tabs) {
+      if (!tabs || tabs.length === 0) return;
+      try {
+        chrome.tabs.sendMessage(tabs[0].id, { action: 'get-panel-state' }, function (response) {
+          if (chrome.runtime.lastError) {
+            // 内容脚本尚未注入（如新页面或 chrome:// 页面）
+            panelToggle.checked = false;
+            return;
+          }
+          if (response && typeof response.isVisible === 'boolean') {
+            panelToggle.checked = response.isVisible;
+          }
+        });
+      } catch (e) {
+        panelToggle.checked = false;
+      }
+    });
+
+    panelToggle.addEventListener('change', function () {
+      chrome.tabs.query({ active: true, currentWindow: true }, function (tabs) {
+        if (!tabs || tabs.length === 0) return;
+        chrome.tabs.sendMessage(tabs[0].id, {
+          action: 'toggle-panel',
+          visible: panelToggle.checked
+        }, function () {
+          if (chrome.runtime.lastError) {
+            showToast('请刷新页面后重试', 'error', 2000);
+            // 回滚开关状态
+            panelToggle.checked = !panelToggle.checked;
+          }
+        });
+      });
+    });
+  }
+
 })();

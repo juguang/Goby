@@ -28,7 +28,7 @@
   "content_scripts": [
     {
       "matches": ["<all_urls>"],
-      "js": ["lib/purify.min.js", "lib/marked.min.js", "content-script.js"],
+      "js": ["lib/purify.min.js", "lib/marked.min.js", "storage.js", "panel.js", "content-script.js"],
       "css": ["agent-panel.css"],
       "run_at": "document_idle"
     }
