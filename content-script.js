@@ -2069,9 +2069,10 @@
 
         // ★ 保存 assistant 的 tool_calls 消息到历史（D-06）
         // 否则后续 tool 结果没有对应的 tool_calls 前驱，API 会报错
+        // content 必须为字符串（不能 null），部分 API 对此严格校验
         _agentState.messages.push({
           role: 'assistant',
-          content: response.content || null,
+          content: response.content || '',
           tool_calls: tcArray
         });
 
