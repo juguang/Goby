@@ -33,7 +33,30 @@
     var shell = document.createElement('div');
     shell.className = 'goby-panel-shell';
 
-    // 占位区域 — Phase 2 将替换为标题栏+聊天区域+输入框+状态栏
+    // 标题栏
+    var header = document.createElement('div');
+    header.className = 'goby-panel-header';
+
+    var title = document.createElement('span');
+    title.className = 'goby-panel-title';
+    title.textContent = 'Goby';
+
+    // 设置按钮 — 点击打开模态框
+    var settingsBtn = document.createElement('button');
+    settingsBtn.className = 'goby-panel-settings-btn';
+    settingsBtn.textContent = '⚙';
+    settingsBtn.title = '设置';
+    settingsBtn.addEventListener('click', function () {
+      if (typeof window.openSettingsModal === 'function') {
+        window.openSettingsModal();
+      }
+    });
+
+    header.appendChild(title);
+    header.appendChild(settingsBtn);
+    shell.appendChild(header);
+
+    // 占位区域 — Phase 2 将替换为聊天区域+输入框+状态栏
     var placeholder = document.createElement('div');
     placeholder.className = 'goby-panel-placeholder';
     placeholder.textContent = 'Goby 面板 — Phase 2 将在此构建完整 UI';
