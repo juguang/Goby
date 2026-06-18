@@ -1365,6 +1365,10 @@
       return persistState().then(function () {
         if (state.isVisible) {
           animateShow();
+          // 面板显示时加载模型名
+          if (_statusModelEl) {
+            return loadModelName();
+          }
         } else {
           animateHide();
         }
