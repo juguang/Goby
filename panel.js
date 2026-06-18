@@ -408,6 +408,12 @@
   // 拖拽把手 DOM 引用
   var _resizeHandle = null;
 
+  // PANEL-09: 截图遮罩 DOM 引用
+  var _overlayEl = null;
+  var _overlayImg = null;
+  var _overlayCloseBtn = null;
+  var _overlayImgContainer = null;
+
   // Plan 03-03: 会话侧栏函数引用
   var _toggleSessionSidebar = null;
   var _renderSessionList = null;
@@ -522,7 +528,11 @@
         thumbImg.src = content;
         thumbImg.style.cssText = 'max-width:200px;max-height:150px;cursor:pointer;border-radius:8px;border:1px solid #e5e7eb;';
         thumbImg.className = 'goby-screenshot-thumb';
-        // PANEL-09: 点击缩略图打开遮罩（由 Task 3 接续）
+        // PANEL-09: 点击缩略图打开全屏遮罩
+        thumbImg.addEventListener('click', function (e) {
+          e.stopPropagation();
+          showScreenshotOverlay(this.src);
+        });
         bubbleDiv.appendChild(thumbImg);
       } else {
         // 用户/工具消息: textContent (SEC-02)
@@ -843,6 +853,62 @@
     sidebar.appendChild(sidebarFooter);
     panel.appendChild(sidebar);
 
+    // ---- PANEL-09: 截图放大遮罩 (D-09/D-10/D-11/D-12) ----
+    var overlayEl = document.createElement('div');
+    overlayEl.id = 'goby-screenshot-overlay';
+    overlayEl.style.cssText = 'position:fixed;top:0;left:0;width:100%;height:100%;' +
+        'background:rgba(0,0,0,0.85);z-index:2147483647;' +
+        'display:none;align-items:center;justify-content:center;' +
+        'overflow:auto;';
+
+    var overlayCloseBtn = document.createElement('button');
+    overlayCloseBtn.textContent = '×'; // ×
+    overlayCloseBtn.style.cssText = 'position:fixed;top:16px;right:24px;' +
+        'color:white;background:rgba(255,255,255,0.2);border:none;' +
+        'font-size:32px;cursor:pointer;width:44px;height:44px;' +
+        'border-radius:50%;display:flex;align-items:center;justify-content:center;' +
+        'z-index:1;transition:background 0.15s;';
+
+    var overlayImgContainer = document.createElement('div');
+    overlayImgContainer.style.cssText = 'padding:24px;';
+
+    var overlayImg = document.createElement('img');
+    overlayImg.style.cssText = 'max-width:none;max-height:none;';
+
+    overlayEl.appendChild(overlayCloseBtn);
+    overlayImgContainer.appendChild(overlayImg);
+    overlayEl.appendChild(overlayImgContainer);
+    panel.appendChild(overlayEl);
+
+    // 存储遮罩 DOM 引用
+    _overlayEl = overlayEl;
+    _overlayImg = overlayImg;
+    _overlayCloseBtn = overlayCloseBtn;
+    _overlayImgContainer = overlayImgContainer;
+
+    // 遮罩事件绑定
+    overlayCloseBtn.addEventListener('click', function (e) {
+      e.stopPropagation();
+      hideScreenshotOverlay();
+    });
+
+    overlayEl.addEventListener('click', function (e) {
+      if (e.target === overlayEl || e.target === overlayImgContainer) {
+        hideScreenshotOverlay();
+      }
+    });
+
+    overlayImg.addEventListener('click', function (e) {
+      e.stopPropagation();
+    });
+
+    // ESC 键关闭遮罩
+    document.addEventListener('keydown', function (e) {
+      if (e.key === 'Escape' && _overlayEl && _overlayEl.style.display === 'flex') {
+        hideScreenshotOverlay();
+      }
+    });
+
     // ---- Plan 03-03: 侧栏事件绑定 ----
     var sidebarOpen = false;
 
@@ -1140,6 +1206,29 @@
         panel.className = 'goby-panel goby-panel-hidden';
       }
     }
+  }
+
+  // ============================================================
+  //  PANEL-09: 截图遮罩控制函数 (D-09/D-10/D-11)
+  // ============================================================
+
+  /**
+   * 显示截图放大遮罩
+   * @param {string} dataUrl - 截图 data URL
+   */
+  function showScreenshotOverlay(dataUrl) {
+    if (!_overlayEl) return;
+    _overlayImg.src = dataUrl;
+    _overlayEl.style.display = 'flex';
+  }
+
+  /**
+   * 隐藏截图放大遮罩
+   */
+  function hideScreenshotOverlay() {
+    if (!_overlayEl) return;
+    _overlayEl.style.display = 'none';
+    _overlayImg.src = '';
   }
 
   // ============================================================
@@ -1552,7 +1641,20 @@
       if (typeof _renderSessionList === 'function') {
         _renderSessionList(text || '');
       }
-    }
+    },
+
+    // PANEL-09: 截图遮罩 API
+
+    /**
+     * 显示截图放大遮罩
+     * @param {string} dataUrl - 截图 data URL
+     */
+    showScreenshotOverlay: showScreenshotOverlay,
+
+    /**
+     * 隐藏截图放大遮罩
+     */
+    hideScreenshotOverlay: hideScreenshotOverlay
   };
 
   // ---- 初始化完成后设置公共引用 ----
