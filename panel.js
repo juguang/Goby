@@ -211,8 +211,6 @@
     '  font-size: 15px;',
     '  line-height: 1;',
     '}',
-    '.goby-avatar-bot { background: #eef2ff; }',
-    '.goby-avatar-user { background: #f3f4f6; }',
     '.goby-avatar-tool { background: #dcfce7; }',
     '.goby-avatar-tool-error { background: #fee2e2; }',
     /* 用户气泡: 右对齐 紫色底 白字 */
@@ -518,23 +516,21 @@
   // ============================================================
 
   /**
-   * 创建头像圆圈元素
-   * @param {string} role - 'user' | 'bot' | 'tool' | 'tool-error'
-   * @returns {HTMLElement}
+   * 创建工具状态头像圆圈元素（仅 tool / tool-error，普通聊天消息不带头像）
+   * @param {string} role - 'tool' | 'tool-error'
+   * @returns {HTMLElement|null}
    */
   function createAvatar(role) {
-    var avatar = document.createElement('div');
     var icon, avatarClass;
     switch (role) {
-      case 'user':
-        icon = '👤'; avatarClass = 'goby-avatar-user'; break;
       case 'tool':
         icon = '✅'; avatarClass = 'goby-avatar-tool'; break;
       case 'tool-error':
         icon = '❌'; avatarClass = 'goby-avatar-tool-error'; break;
       default:
-        icon = '🤖'; avatarClass = 'goby-avatar-bot'; break;
+        return null;
     }
+    var avatar = document.createElement('div');
     avatar.className = 'goby-msg-avatar ' + avatarClass;
     avatar.textContent = icon;
     return avatar;
@@ -604,15 +600,12 @@
     // 内联动画确保 JSDOM 测试可检测（同时 CSS @keyframes 提供真实浏览器支持）
     bubbleDiv.style.animation = 'msgFadeIn 200ms ease-out';
 
-    // 头像排列: 用户=气泡+头像(右), bot/tool=头像+气泡(左)
+    // 工具结果消息带头像（左），普通 user/bot 消息不带头像
     var avatar = createAvatar(role);
-    if (role === 'user') {
-      wrapperDiv.appendChild(bubbleDiv);
+    if (avatar) {
       wrapperDiv.appendChild(avatar);
-    } else {
-      wrapperDiv.appendChild(avatar);
-      wrapperDiv.appendChild(bubbleDiv);
     }
+    wrapperDiv.appendChild(bubbleDiv);
     _messagesContainer.appendChild(wrapperDiv);
 
     // 自动滚动到底部
@@ -640,9 +633,9 @@
     var wrapperDiv = document.createElement('div');
     wrapperDiv.className = 'goby-tool-call-wrapper';
 
-    // 工具调用执行中使用 🔧 头像（区别于结果的 ✅/❌）
+    // 工具调用执行中使用 🔧 头像（绿底，与结果 ✅ 一致）
     var avatar = document.createElement('div');
-    avatar.className = 'goby-msg-avatar goby-avatar-bot';
+    avatar.className = 'goby-msg-avatar goby-avatar-tool';
     avatar.textContent = '🔧';
     wrapperDiv.appendChild(avatar);
 
@@ -1515,12 +1508,9 @@
 
     // 流式 chunk
     if (!_streamingBubble) {
-      // 创建新的 Bot 气泡（带头像）
+      // 创建新的 Bot 气泡（无头像）
       var wrapperDiv = document.createElement('div');
       wrapperDiv.className = 'goby-msg-bot-wrapper';
-
-      var streamAvatar = createAvatar('bot');
-      wrapperDiv.appendChild(streamAvatar);
 
       var bubbleDiv = document.createElement('div');
       bubbleDiv.className = 'goby-msg-bubble goby-msg-bot';
