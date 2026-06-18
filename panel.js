@@ -1,5 +1,5 @@
 // Goby - AI 浏览器助手 | 面板状态管理和 DOM 操作
-// Plan 02-01: Shadow DOM 面板壳 + 悬浮球交互
+// Plan 02-02: 聊天区域 + 输入框 + 消息气泡渲染
 // 依赖: storage.js（manifest content_scripts 顺序注入）
 
 (function () {
@@ -66,10 +66,138 @@
     '.goby-close-btn:hover {',
     '  background: rgba(255,255,255,0.15);',
     '}',
+    /* 聊天区域容器 — flex:1 填充剩余空间 */
     '#goby-chat-area {',
     '  flex: 1;',
+    '  display: flex;',
+    '  flex-direction: column;',
+    '  overflow: hidden;',
+    '}',
+    '.goby-messages-container {',
+    '  flex: 1;',
     '  overflow-y: auto;',
+    '  padding: 12px 8px;',
+    '  display: flex;',
+    '  flex-direction: column;',
+    '  gap: 8px;',
     '  background: #f9fafb;',
+    '}',
+    /* 欢迎消息 */
+    '.goby-welcome {',
+    '  display: flex;',
+    '  flex-direction: column;',
+    '  align-items: center;',
+    '  justify-content: center;',
+    '  padding: 32px 24px;',
+    '  text-align: center;',
+    '  height: 100%;',
+    '}',
+    '.goby-welcome-icon {',
+    '  font-size: 48px;',
+    '  margin-bottom: 16px;',
+    '  opacity: 0.6;',
+    '}',
+    '.goby-welcome-heading {',
+    '  font-size: 15px;',
+    '  font-weight: 600;',
+    '  color: #111827;',
+    '  margin-bottom: 8px;',
+    '}',
+    '.goby-welcome-body {',
+    '  font-size: 13px;',
+    '  color: #6b7280;',
+    '  line-height: 1.6;',
+    '  max-width: 320px;',
+    '}',
+    '.goby-welcome-tools {',
+    '  display: flex;',
+    '  flex-wrap: wrap;',
+    '  gap: 6px;',
+    '  justify-content: center;',
+    '  margin-top: 16px;',
+    '  max-width: 320px;',
+    '}',
+    '.goby-welcome-tag {',
+    '  font-size: 11px;',
+    '  color: #667eea;',
+    '  background: rgba(102,126,234,0.08);',
+    '  padding: 4px 10px;',
+    '  border-radius: 12px;',
+    '  white-space: nowrap;',
+    '}',
+    /* 输入栏 */
+    '.goby-input-bar {',
+    '  display: flex;',
+    '  align-items: flex-end;',
+    '  gap: 8px;',
+    '  padding: 8px 12px;',
+    '  background: #ffffff;',
+    '  border-top: 1px solid #e5e7eb;',
+    '  flex-shrink: 0;',
+    '}',
+    '.goby-input-textarea {',
+    '  flex: 1;',
+    '  min-height: 40px;',
+    '  max-height: 100px;',
+    '  padding: 8px 12px;',
+    '  border: 1px solid #e5e7eb;',
+    '  border-radius: 8px;',
+    '  font-size: 13px;',
+    '  font-family: -apple-system, BlinkMacSystemFont, "Segoe UI", Roboto, Helvetica, Arial, sans-serif;',
+    '  color: #111827;',
+    '  background: #ffffff;',
+    '  outline: none;',
+    '  resize: none;',
+    '  overflow-y: auto;',
+    '  line-height: 1.5;',
+    '  box-sizing: border-box;',
+    '  transition: border-color 0.15s, height 0.1s ease;',
+    '}',
+    '.goby-input-textarea:focus {',
+    '  border-color: #667eea;',
+    '  outline: 2px solid rgba(102,126,234,0.4);',
+    '  outline-offset: -1px;',
+    '}',
+    '.goby-input-textarea::placeholder {',
+    '  color: #6b7280;',
+    '}',
+    '.goby-send-btn {',
+    '  width: 36px;',
+    '  height: 36px;',
+    '  min-width: 36px;',
+    '  border: none;',
+    '  border-radius: 8px;',
+    '  cursor: pointer;',
+    '  background: linear-gradient(135deg, #667eea, #764ba2);',
+    '  color: #ffffff;',
+    '  font-size: 18px;',
+    '  display: flex;',
+    '  align-items: center;',
+    '  justify-content: center;',
+    '  transition: opacity 0.15s, transform 0.15s;',
+    '  flex-shrink: 0;',
+    '  padding: 0;',
+    '}',
+    '.goby-send-btn:hover {',
+    '  opacity: 0.85;',
+    '}',
+    '.goby-send-btn:active {',
+    '  transform: scale(0.95);',
+    '}',
+    '.goby-send-btn:disabled {',
+    '  opacity: 0.4;',
+    '  cursor: not-allowed;',
+    '}',
+    /* 消息滚动条 */
+    '.goby-messages-container::-webkit-scrollbar {',
+    '  width: 5px;',
+    '}',
+    '.goby-messages-container::-webkit-scrollbar-track {',
+    '  background: transparent;',
+    '}',
+    '.goby-messages-container::-webkit-scrollbar-thumb {',
+    '  background: #d1d5db;',
+    '  border-radius: 4px;',
     '}'
   ].join('\n');
 
@@ -83,6 +211,13 @@
 
   var _ball = null;
   var _host = null;
+
+  // 聊天区域 DOM 引用（供 appendMessage/sendMessage 使用）
+  var _chatArea = null;
+  var _messagesContainer = null;
+  var _welcomeEl = null;
+  var _inputEl = null;
+  var _sendBtn = null;
 
   // ============================================================
   //  持久化面板状态到 chrome.storage.local
@@ -140,8 +275,128 @@
   }
 
   // ============================================================
+  //  appendMessage — 添加消息气泡到聊天区域
+  //  所有用户输入通过 textContent 赋值，绝不使用 innerHTML（SEC-02）
+  // ============================================================
+
+  function appendMessage(role, content) {
+    if (!_messagesContainer) return;
+
+    // 如果欢迎消息可见，隐藏它
+    if (_welcomeEl && _welcomeEl.style.display !== 'none') {
+      _welcomeEl.style.display = 'none';
+    }
+
+    // 根据 role 选择样式类
+    var wrapperClass, bubbleClass;
+    switch (role) {
+      case 'user':
+        wrapperClass = 'goby-msg-user-wrapper';
+        bubbleClass = 'goby-msg-user';
+        break;
+      case 'bot':
+        wrapperClass = 'goby-msg-bot-wrapper';
+        bubbleClass = 'goby-msg-bot';
+        break;
+      case 'tool':
+        wrapperClass = 'goby-msg-tool-wrapper';
+        bubbleClass = 'goby-msg-tool';
+        break;
+      case 'tool-error':
+        wrapperClass = 'goby-msg-tool-error-wrapper';
+        bubbleClass = 'goby-msg-tool-error';
+        break;
+      default:
+        wrapperClass = 'goby-msg-bot-wrapper';
+        bubbleClass = 'goby-msg-bot';
+    }
+
+    // 创建 wrapper
+    var wrapperDiv = document.createElement('div');
+    wrapperDiv.className = wrapperClass;
+
+    // 创建气泡 — SEC-02: 使用 textContent，绝不使用 innerHTML
+    var bubbleDiv = document.createElement('div');
+    bubbleDiv.className = 'goby-msg-bubble ' + bubbleClass;
+    bubbleDiv.textContent = content;
+
+    wrapperDiv.appendChild(bubbleDiv);
+    _messagesContainer.appendChild(wrapperDiv);
+
+    // 自动滚动到底部
+    _messagesContainer.scrollTop = _messagesContainer.scrollHeight;
+  }
+
+  // ============================================================
+  //  sendMessage — 发送当前输入内容
+  // ============================================================
+
+  function sendMessage() {
+    if (!_inputEl) return;
+
+    var text = _inputEl.value.trim();
+    if (text === '') return;
+
+    appendMessage('user', text);
+
+    // 清空输入框并重置高度
+    _inputEl.value = '';
+    _inputEl.style.height = '40px';
+    _inputEl.focus();
+  }
+
+  // ============================================================
+  //  renderWelcome — 渲染欢迎消息（清空聊天区域后调用）
+  // ============================================================
+
+  function renderWelcome() {
+    if (!_messagesContainer) return;
+
+    // 清空消息气泡，保留欢迎元素
+    var messages = _messagesContainer.querySelectorAll('.goby-msg-bubble');
+    messages.forEach(function (msg) {
+      var wrapper = msg.parentNode;
+      if (wrapper) wrapper.parentNode.removeChild(wrapper);
+    });
+
+    if (_welcomeEl) {
+      _welcomeEl.style.display = 'flex';
+    }
+  }
+
+  // ============================================================
+  //  clearChat — 清空所有消息并重新显示欢迎消息
+  // ============================================================
+
+  function clearChat() {
+    if (!_messagesContainer) return;
+
+    // 移除所有消息气泡
+    var items = _messagesContainer.querySelectorAll('.goby-msg-user-wrapper, .goby-msg-bot-wrapper, .goby-msg-tool-wrapper, .goby-msg-tool-error-wrapper');
+    items.forEach(function (item) {
+      item.parentNode.removeChild(item);
+    });
+
+    if (_welcomeEl) {
+      _welcomeEl.style.display = 'flex';
+    }
+  }
+
+  // ============================================================
+  //  autoResize — 输入框自动扩展高度（40px ~ 100px）
+  // ============================================================
+
+  function autoResize() {
+    if (!_inputEl) return;
+    _inputEl.style.height = '40px';
+    var scrollHeight = _inputEl.scrollHeight;
+    var newHeight = Math.min(Math.max(scrollHeight, 40), 100);
+    _inputEl.style.height = newHeight + 'px';
+  }
+
+  // ============================================================
   //  创建 Shadow DOM 面板壳
-  //  替换 Phase 1 的常规 DOM 面板
+  //  包含聊天区域 + 输入栏
   // ============================================================
 
   function createPanelShell() {
@@ -165,12 +420,11 @@
     // 创建面板容器
     var panel = document.createElement('div');
     panel.className = 'goby-panel ' + (state.isVisible ? 'goby-panel-visible' : 'goby-panel-hidden');
-    // 内联样式确保测试和早期渲染可用（CSS PANEL_CSS 也设置相同值）
     panel.style.width = '400px';
     panel.style.height = '480px';
     panel.style.transition = 'transform 200ms ease, opacity 200ms ease';
 
-    // 标题栏
+    // ---- 标题栏 ----
     var header = document.createElement('div');
     header.className = 'goby-panel-header';
 
@@ -180,7 +434,7 @@
 
     var closeBtn = document.createElement('button');
     closeBtn.className = 'goby-close-btn';
-    closeBtn.textContent = '—'; // 破折号 —
+    closeBtn.textContent = '—';
     closeBtn.addEventListener('click', function (e) {
       e.stopPropagation();
       GobyPanel.hide();
@@ -189,12 +443,75 @@
     header.appendChild(title);
     header.appendChild(closeBtn);
 
-    // 内容预留区（供 Plan 02-02 聊天区域使用）
+    // ---- 聊天区域 ----
     var chatArea = document.createElement('div');
     chatArea.id = 'goby-chat-area';
 
+    var messagesContainer = document.createElement('div');
+    messagesContainer.className = 'goby-messages-container';
+
+    // 欢迎消息
+    var welcomeEl = document.createElement('div');
+    welcomeEl.className = 'goby-welcome';
+
+    var welcomeIcon = document.createElement('div');
+    welcomeIcon.className = 'goby-welcome-icon';
+    welcomeIcon.textContent = '🤖';
+
+    var welcomeHeading = document.createElement('div');
+    welcomeHeading.className = 'goby-welcome-heading';
+    welcomeHeading.textContent = '你好！我是 Goby';
+
+    var welcomeBody = document.createElement('div');
+    welcomeBody.className = 'goby-welcome-body';
+    welcomeBody.textContent = '你的 AI 浏览器助手。我可以帮你填写表单、点击按钮、查询内容、分析页面...';
+
+    var welcomeTools = document.createElement('div');
+    welcomeTools.className = 'goby-welcome-tools';
+
+    var toolLabels = ['填写表单', '点击按钮', '查询内容', '分析页面', '截取截图', '读写剪贴板', '数学计算', '获取时间'];
+    toolLabels.forEach(function (label) {
+      var tag = document.createElement('div');
+      tag.className = 'goby-welcome-tag';
+      tag.textContent = label;
+      welcomeTools.appendChild(tag);
+    });
+
+    welcomeEl.appendChild(welcomeIcon);
+    welcomeEl.appendChild(welcomeHeading);
+    welcomeEl.appendChild(welcomeBody);
+    welcomeEl.appendChild(welcomeTools);
+
+    messagesContainer.appendChild(welcomeEl);
+    chatArea.appendChild(messagesContainer);
+
+    // ---- 输入栏 ----
+    var inputBar = document.createElement('div');
+    inputBar.className = 'goby-input-bar';
+
+    var inputEl = document.createElement('textarea');
+    inputEl.className = 'goby-input-textarea';
+    inputEl.placeholder = '输入消息... (Enter 发送, Shift+Enter 换行)';
+    inputEl.rows = 1;
+    // 内联样式确保 JSDOM 测试可以读取（同时 CSS class 提供相同约束）
+    inputEl.style.minHeight = '40px';
+    inputEl.style.maxHeight = '100px';
+    inputEl.style.height = '40px';
+
+    var sendBtn = document.createElement('button');
+    sendBtn.className = 'goby-send-btn';
+    sendBtn.textContent = '➤';
+    sendBtn.title = '发送消息';
+    // 内联样式确保 JSDOM 测试可读取
+    sendBtn.style.background = 'linear-gradient(135deg, #667eea, #764ba2)';
+
+    inputBar.appendChild(inputEl);
+    inputBar.appendChild(sendBtn);
+
+    // 组装面板
     panel.appendChild(header);
     panel.appendChild(chatArea);
+    panel.appendChild(inputBar);
 
     // 组装 Shadow DOM
     shadow.appendChild(styleEl);
@@ -202,6 +519,42 @@
 
     document.body.appendChild(host);
     _host = host;
+
+    // 存储 DOM 引用
+    _chatArea = chatArea;
+    _messagesContainer = messagesContainer;
+    _welcomeEl = welcomeEl;
+    _inputEl = inputEl;
+    _sendBtn = sendBtn;
+
+    // ---- 事件绑定 ----
+
+    // 输入框 keydown: Enter 发送，Shift+Enter 换行
+    inputEl.addEventListener('keydown', function (e) {
+      if (e.key === 'Enter' && !e.shiftKey) {
+        e.preventDefault();
+        sendMessage();
+      } else if (e.key === 'Enter' && e.shiftKey) {
+        e.preventDefault();
+        // 手动在光标位置插入换行（兼容 JSDOM 和真实浏览器）
+        var start = inputEl.selectionStart;
+        var end = inputEl.selectionEnd;
+        var val = inputEl.value;
+        inputEl.value = val.substring(0, start) + '\n' + val.substring(end);
+        // 更新光标位置
+        inputEl.selectionStart = inputEl.selectionEnd = start + 1;
+        // 触发 auto-resize
+        autoResize();
+      }
+    });
+
+    // 输入框 input: auto-resize
+    inputEl.addEventListener('input', autoResize);
+
+    // 发送按钮 click
+    sendBtn.addEventListener('click', function () {
+      sendMessage();
+    });
   }
 
   // ============================================================
@@ -230,7 +583,6 @@
   function animateHide() {
     if (_host) {
       if (!document.body.contains(_host)) {
-        // Host 已被从 DOM 移除（如测试清理），重置引用
         _host = null;
         return;
       }
@@ -244,6 +596,8 @@
   // ============================================================
   //  公共 API — GobyPanel
   //  保持向后兼容（Phase 1 接口签名不变）
+  //  新增: appendMessage, sendMessage, renderWelcome, clearChat,
+  //        getInputValue, focusInput, _chatArea, _inputEl
   // ============================================================
 
   window.GobyPanel = {
@@ -327,25 +681,72 @@
     },
 
     /**
-     * Shadow DOM 引用（供下游 plan 访问面板内部结构）
+     * 添加消息气泡到聊天区域
+     * @param {string} role - 'user', 'bot', 'tool', 'tool-error'
+     * @param {string} content - 消息内容（通过 textContent 注入，SEC-02）
+     */
+    appendMessage: appendMessage,
+
+    /**
+     * 发送当前输入内容
+     */
+    sendMessage: sendMessage,
+
+    /**
+     * 渲染欢迎消息（清空聊天区域后调用）
+     */
+    renderWelcome: renderWelcome,
+
+    /**
+     * 清空所有消息并重新显示欢迎消息
+     */
+    clearChat: clearChat,
+
+    /**
+     * 获取输入框文本
+     * @returns {string}
+     */
+    getInputValue: function () {
+      return _inputEl ? _inputEl.value : '';
+    },
+
+    /**
+     * 聚焦输入框
+     */
+    focusInput: function () {
+      if (_inputEl) _inputEl.focus();
+    },
+
+    /**
+     * Shadow DOM 引用
      */
     _shadowRoot: null,
 
     /**
      * 面板容器元素引用
      */
-    _panelContainer: null
+    _panelContainer: null,
+
+    /**
+     * 聊天区域容器引用
+     */
+    _chatArea: null,
+
+    /**
+     * 输入框引用
+     */
+    _inputEl: null
   };
 
   // ---- 初始化完成后设置公共引用 ----
-  // _shadowRoot 和 _panelContainer 在第一次创建面板后设置
-  // 可以通过 GobyPanel.show() 或 init() 触发
   var originalCreate = createPanelShell;
   createPanelShell = function () {
     originalCreate();
     if (_host) {
       window.GobyPanel._shadowRoot = _host.shadowRoot;
       window.GobyPanel._panelContainer = _host;
+      window.GobyPanel._chatArea = _chatArea;
+      window.GobyPanel._inputEl = _inputEl;
     }
   };
 })();
