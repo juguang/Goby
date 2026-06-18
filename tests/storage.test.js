@@ -22,7 +22,7 @@ describe('GobyStorage', () => {
   // --- Legacy backward-compat tests (retained from Plan 01-01) ---
 
   describe('saveConfig (legacy backward compat)', () => {
-    it('stores config via chrome.storage.local.set with key "agentConfig"', async () => {
+    it('stores config via chrome.storage.local.set with key "agentConfig" (new format)', async () => {
       const config = {
         baseUrl: 'http://x',
         apiKey: 'sk-test',
@@ -31,9 +31,15 @@ describe('GobyStorage', () => {
 
       await GobyStorage.saveConfig(config);
 
-      expect(chrome.storage.local.set).toHaveBeenCalledWith({
-        agentConfig: config
+      // saveConfig now wraps into new multi-profile format
+      expect(chrome.storage.local.set).toHaveBeenCalled();
+      const stored = await chrome.storage.local.get(['agentConfig']);
+      expect(stored.agentConfig.profiles['默认配置']).toEqual({
+        baseUrl: 'http://x',
+        apiKey: 'sk-test',
+        model: 'm1'
       });
+      expect(stored.agentConfig.activeProfile).toBe('默认配置');
     });
 
     it('stores different config values correctly', async () => {
@@ -45,9 +51,10 @@ describe('GobyStorage', () => {
 
       await GobyStorage.saveConfig(config);
 
-      expect(chrome.storage.local.set).toHaveBeenCalledWith({
-        agentConfig: config
-      });
+      const stored = await chrome.storage.local.get(['agentConfig']);
+      expect(stored.agentConfig.profiles['默认配置'].baseUrl).toBe('http://example.com/v1');
+      expect(stored.agentConfig.profiles['默认配置'].apiKey).toBe('sk-abc123');
+      expect(stored.agentConfig.profiles['默认配置'].model).toBe('gpt-4');
     });
   });
 

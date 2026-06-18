@@ -11,9 +11,18 @@ require('./__mocks__/chrome.js');
 require('../storage.js');
 
 // Helper: flush microtask queue by chaining multiple Promise.resolve().then() cycles
-// The getConfig().then().then() chain takes 2 microtask ticks to complete
+// The getConfig().then().then() chain takes 2 microtask ticks to complete.
+// saveProfile now does readConfig → writeConfig → readConfig (cache refresh) = 3+ ticks.
 function flushMicrotasks() {
   return Promise.resolve().then(function () {
+    return Promise.resolve();
+  }).then(function () {
+    return Promise.resolve();
+  }).then(function () {
+    return Promise.resolve();
+  }).then(function () {
+    return Promise.resolve();
+  }).then(function () {
     return Promise.resolve();
   });
 }
@@ -102,18 +111,20 @@ describe('Popup', function () {
 
       // saveConfig() also goes through a promise chain
       return flushMicrotasks().then(function () {
-        expect(chrome.storage.local.set).toHaveBeenCalledWith({
-          agentConfig: {
-            baseUrl: 'http://test.com/v1',
-            apiKey: 'sk-test-456',
-            model: 'qwen-3'
-          }
-        });
+        // saveConfig now stores in new multi-profile format
+        expect(chrome.storage.local.set).toHaveBeenCalled();
+        // Verify the data was stored correctly via getConfig
+        return GobyStorage.getConfig().then(function (result) {
+          expect(result.baseUrl).toBe('http://test.com/v1');
+          expect(result.apiKey).toBe('sk-test-456');
+          expect(result.model).toBe('qwen-3');
+        }).then(function () {
 
-        // Verify success feedback
-        var saveStatus = document.getElementById('saveStatus');
-        expect(saveStatus.textContent).toBe('已保存');
-        expect(saveStatus.className).toContain('success');
+          // Verify success feedback
+          var saveStatus = document.getElementById('saveStatus');
+          expect(saveStatus.textContent).toBe('已保存');
+          expect(saveStatus.className).toContain('success');
+        });
       });
     });
 
