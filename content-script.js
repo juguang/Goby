@@ -1388,20 +1388,47 @@
       var c = { role: m.role || 'user' };
       c.content = (typeof m.content === 'string') ? m.content : '';
       if (m.tool_calls) {
+        var tcSource;
         if (Array.isArray(m.tool_calls)) {
-          c.tool_calls = m.tool_calls;
+          tcSource = m.tool_calls;
         } else {
           var tcArr = [];
           var keys = Object.keys(m.tool_calls);
           for (var k = 0; k < keys.length; k++) {
             tcArr.push(m.tool_calls[keys[k]]);
           }
-          c.tool_calls = tcArr;
+          tcSource = tcArr;
+        }
+        // 深拷贝并确保 function.arguments 为 JSON 字符串（API 要求）
+        c.tool_calls = [];
+        for (var ti = 0; ti < tcSource.length; ti++) {
+          var src = tcSource[ti];
+          var tc = { id: src.id, type: src.type || 'function' };
+          tc.function = { name: src.function.name };
+          var args = src.function.arguments;
+          if (typeof args === 'string') {
+            tc.function.arguments = args;
+          } else if (args && typeof args === 'object') {
+            tc.function.arguments = JSON.stringify(args);
+          } else {
+            tc.function.arguments = '{}';
+          }
+          c.tool_calls.push(tc);
         }
       }
       if (m.tool_call_id) c.tool_call_id = m.tool_call_id;
       if (m.name) c.name = m.name;
       clean.push(c);
+    }
+    // 移除末尾悬空的 assistant tool_calls（无匹配 tool 结果）
+    // 防止页面跳转或异常中断导致的不完整状态被发送到 API
+    while (clean.length > 0) {
+      var lastMsg = clean[clean.length - 1];
+      if (lastMsg.role === 'assistant' && lastMsg.tool_calls) {
+        clean.pop();
+      } else {
+        break;
+      }
     }
     return clean;
   }
@@ -1585,6 +1612,25 @@
   }
 
   /**
+   * stripDanglingToolCalls — 移除消息数组末尾悬空的 assistant tool_calls
+   * 防止页面跳转或异常中断导致的不完整状态
+   * @param {Array} msgs
+   * @returns {Array}
+   */
+  function stripDanglingToolCalls(msgs) {
+    var result = msgs.slice();
+    while (result.length > 0) {
+      var last = result[result.length - 1];
+      if (last.role === 'assistant' && last.tool_calls) {
+        result.pop();
+      } else {
+        break;
+      }
+    }
+    return result;
+  }
+
+  /**
    * saveSession — 将当前会话保存到 chrome.storage.local (SESS-01)
    * Key: 'gobySessions', 结构见 PLAN.md
    * 保存后调用 cleanupOldSessions 进行 LRU 淘汰
@@ -1619,13 +1665,15 @@
       hostname = _agentState.activeOrigin;
     }
 
+    var msgs = stripDanglingToolCalls(JSON.parse(JSON.stringify(_agentState.messages)));
+
     var sessionData = {
       origin: _agentState.activeOrigin,
       title: hostname,
       updatedAt: Date.now(),
       messageCount: msgCount,
       preview: preview,
-      messages: JSON.parse(JSON.stringify(_agentState.messages))
+      messages: msgs
     };
 
     // 读取现有 sessions → 合并当前 → 写入
@@ -1669,8 +1717,8 @@
 
       var latest = matching[0];
 
-      // 恢复状态
-      _agentState.messages = JSON.parse(JSON.stringify(latest.data.messages));
+      // 恢复状态（清除可能因页面跳转残留的悬空 tool_calls）
+      _agentState.messages = stripDanglingToolCalls(JSON.parse(JSON.stringify(latest.data.messages)));
       _agentState.sessionId = latest.sessionId;
       _agentState.activeOrigin = origin;
 
@@ -1709,8 +1757,8 @@
       var session = sessions[sessionId];
       if (!session) return null;
 
-      // 恢复状态
-      _agentState.messages = JSON.parse(JSON.stringify(session.messages));
+      // 恢复状态（清除可能因页面跳转残留的悬空 tool_calls）
+      _agentState.messages = stripDanglingToolCalls(JSON.parse(JSON.stringify(session.messages)));
       _agentState.sessionId = sessionId;
       _agentState.activeOrigin = session.origin;
 

@@ -152,11 +152,8 @@
         finalToolCalls = {};
         Object.keys(streamToolCalls).forEach(function (index) {
           var tc = streamToolCalls[index];
-          try {
-            tc.function.arguments = JSON.parse(tc.function.arguments);
-          } catch (e) {
-            // arguments 可能不合法的 JSON（如空字符串）
-          }
+          // 保持 arguments 为 JSON 字符串，不解析为对象
+          // API 要求 function.arguments 为字符串格式
           finalToolCalls[index] = tc;
         });
       }
