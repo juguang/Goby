@@ -397,6 +397,11 @@
     '  border-color: #86efac; color: #166534; }',
     '.goby-tool-call-badge.error { animation: none; background: #fef2f2;',
     '  border-color: #fca5a5; color: #991b1b; }',
+    '.goby-tool-expand-btn { font-size: 11px; padding: 2px 8px; margin-left: 4px;',
+    '  border: none; border-radius: 10px; cursor: pointer;',
+    '  background: rgba(255,255,255,0.6); color: inherit;',
+    '  font-family: inherit; transition: background 0.15s; }',
+    '.goby-tool-expand-btn:hover { background: rgba(255,255,255,0.9); }',
     '@keyframes toolCallPulse { 0%, 100% { opacity: 1; } 50% { opacity: 0.6; } }'
   ].join('\n');
 
@@ -606,6 +611,8 @@
 
   /**
    * 更新工具调用状态指示器
+   * 截断结果（>maxShow 字符）时附加展开/收起按钮，点击切换完整文本与预览
+   * 所有用户/LLM 内容通过 textContent 注入，避免 XSS
    * @param {HTMLElement} badgeEl - appendToolCall 返回的元素
    * @param {string} result - 工具执行结果
    */
@@ -613,12 +620,48 @@
     if (!badgeEl) return;
     var isError = typeof result === 'string' && result.startsWith('Error:');
     badgeEl.className = 'goby-tool-call-badge ' + (isError ? 'error' : 'done');
+
     var maxShow = 60;
-    var shortResult = (typeof result === 'string' && result.length > maxShow)
-      ? result.substring(0, maxShow) + '...'
-      : result || '';
-    badgeEl.innerHTML = '<span class="goby-tool-name">' + (badgeEl.querySelector('.goby-tool-name') ? badgeEl.querySelector('.goby-tool-name').textContent : '') + '</span>'
-      + '<span class="goby-tool-status">' + escapeHtml(shortResult) + '</span>';
+    var raw = (typeof result === 'string') ? result : '';
+    var isTruncated = raw.length > maxShow;
+    var shortResult = isTruncated ? raw.substring(0, maxShow) + '...' : raw;
+
+    var prevName = badgeEl.querySelector('.goby-tool-name');
+    var nameText = prevName ? prevName.textContent : '';
+
+    while (badgeEl.firstChild) badgeEl.removeChild(badgeEl.firstChild);
+
+    var nameEl = document.createElement('span');
+    nameEl.className = 'goby-tool-name';
+    nameEl.textContent = nameText;
+    badgeEl.appendChild(nameEl);
+
+    var statusEl = document.createElement('span');
+    statusEl.className = 'goby-tool-status';
+    statusEl.dataset.full = raw;
+    statusEl.dataset.short = shortResult;
+    statusEl.textContent = shortResult;
+    badgeEl.appendChild(statusEl);
+
+    if (isTruncated) {
+      var btn = document.createElement('button');
+      btn.type = 'button';
+      btn.className = 'goby-tool-expand-btn';
+      btn.textContent = '展开';
+      btn.dataset.expanded = 'false';
+      btn.addEventListener('click', function () {
+        if (btn.dataset.expanded === 'false') {
+          statusEl.textContent = statusEl.dataset.full;
+          btn.textContent = '收起';
+          btn.dataset.expanded = 'true';
+        } else {
+          statusEl.textContent = statusEl.dataset.short;
+          btn.textContent = '展开';
+          btn.dataset.expanded = 'false';
+        }
+      });
+      badgeEl.appendChild(btn);
+    }
   }
 
   // ============================================================
@@ -1390,11 +1433,6 @@
    * @param {string} content - 原始 LLM 输出 / markdown
    * @returns {string} 消毒后的安全 HTML
    */
-  function escapeHtml(str) {
-    if (typeof str !== 'string') return '';
-    return str.replace(/&/g, '&amp;').replace(/</g, '&lt;').replace(/>/g, '&gt;').replace(/"/g, '&quot;').replace(/'/g, '&#039;');
-  }
-
   function renderMarkdown(content) {
     if (!content) return '';
     var html;
