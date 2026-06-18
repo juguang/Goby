@@ -89,11 +89,12 @@ describe('Agent Main Loop', function () {
     await flushMicrotasks();
 
     var state = window.GobyAgent.getState();
-    // Should have user message + assistant message (agent loop adds both)
+    // Should have system prompt + user message + assistant message (agent loop adds both)
     // RED: Only user message exists (no agent loop)
-    expect(state.messages.length).toBe(2);
-    expect(state.messages[0].role).toBe('user');
-    expect(state.messages[1].role).toBe('assistant');
+    expect(state.messages.length).toBe(3);
+    expect(state.messages[0].role).toBe('system'); // system prompt from session init
+    expect(state.messages[1].role).toBe('user');
+    expect(state.messages[2].role).toBe('assistant');
     expect(state.isProcessing).toBe(false);
   });
 

@@ -555,6 +555,7 @@
     isProcessing: false,
     connectionStatus: 'gray',
     activeOrigin: '',
+    sessionId: '',           // 当前会话 ID (Plan 03-03)
     toolCallCounter: 0      // 会话工具调用计数（AGENT-05 限制保护）
   };
 
@@ -1069,6 +1070,365 @@
   }
 
   // ================================================================
+  //  会话管理 (Plan 03-03, SESS-01/02/03/04)
+  // ================================================================
+
+  /**
+   * sessionIdForOrigin — DJB2 hash 生成一致会话哈希 (SESS-02, D-17)
+   * 标准 DJB2 算法：hash = ((hash << 5) - hash) + charCode; hash |= 0
+   * @param {string} origin - 域名（如 https://example.com）
+   * @returns {string} 'session_' + abs hash 的 base36 编码
+   */
+  function sessionIdForOrigin(origin) {
+    var hash = 5381;
+    var str = origin || '';
+    for (var i = 0; i < str.length; i++) {
+      hash = ((hash << 5) - hash) + str.charCodeAt(i);
+      hash |= 0; // Convert to 32-bit integer
+    }
+    return 'session_' + Math.abs(hash).toString(36);
+  }
+
+  /**
+   * createSession — 创建新会话 (SESS-01, D-17)
+   * sessionId = sessionIdForOrigin(origin) + '_' + Date.now()
+   * @param {string} origin
+   * @returns {string} sessionId
+   */
+  function createSession(origin) {
+    var sessionId = sessionIdForOrigin(origin) + '_' + Date.now();
+
+    _agentState.messages = [{ role: 'system', content: SYSTEM_PROMPT }];
+    _agentState.sessionId = sessionId;
+    _agentState.activeOrigin = origin;
+
+    // 重置 UI
+    if (window.GobyPanel && typeof window.GobyPanel.renderWelcome === 'function') {
+      window.GobyPanel.renderWelcome();
+    }
+
+    return sessionId;
+  }
+
+  /**
+   * saveSession — 将当前会话保存到 chrome.storage.local (SESS-01)
+   * Key: 'gobySessions', 结构见 PLAN.md
+   * 保存后调用 cleanupOldSessions 进行 LRU 淘汰
+   * @returns {Promise<void>}
+   */
+  function saveSession() {
+    if (!_agentState.activeOrigin || !_agentState.sessionId) {
+      return Promise.resolve();
+    }
+
+    // 计算 preview：第一条 role='user' 消息的前 30 字符
+    var preview = '';
+    for (var si = 0; si < _agentState.messages.length; si++) {
+      if (_agentState.messages[si].role === 'user') {
+        preview = (_agentState.messages[si].content || '').substring(0, 30);
+        break;
+      }
+    }
+
+    // messageCount：不含 system prompt 的消息数量
+    var msgCount = 0;
+    for (var mi = 0; mi < _agentState.messages.length; mi++) {
+      if (_agentState.messages[mi].role !== 'system') {
+        msgCount++;
+      }
+    }
+
+    var hostname = '';
+    try {
+      hostname = new URL(_agentState.activeOrigin).hostname;
+    } catch (e) {
+      hostname = _agentState.activeOrigin;
+    }
+
+    var sessionData = {
+      origin: _agentState.activeOrigin,
+      title: hostname,
+      updatedAt: Date.now(),
+      messageCount: msgCount,
+      preview: preview,
+      messages: JSON.parse(JSON.stringify(_agentState.messages))
+    };
+
+    // 读取现有 sessions → 合并当前 → 写入
+    return chrome.storage.local.get('gobySessions').then(function (result) {
+      var sessions = result.gobySessions || {};
+      sessions[_agentState.sessionId] = sessionData;
+
+      return chrome.storage.local.set({ gobySessions: sessions });
+    }).then(function () {
+      // LRU 淘汰
+      return cleanupOldSessions();
+    });
+  }
+
+  /**
+   * loadSession — 加载指定域名的最新会话 (SESS-01)
+   * 从 storage 读取该 origin 的所有会话，按 updatedAt 降序取最新
+   * @param {string} origin - 域名
+   * @returns {Promise<Object|null>} 会话数据或 null
+   */
+  function loadSession(origin) {
+    return chrome.storage.local.get('gobySessions').then(function (result) {
+      var sessions = result.gobySessions || {};
+      var matching = [];
+
+      var keys = Object.keys(sessions);
+      for (var ki = 0; ki < keys.length; ki++) {
+        if (sessions[keys[ki]].origin === origin) {
+          matching.push({ sessionId: keys[ki], data: sessions[keys[ki]] });
+        }
+      }
+
+      if (matching.length === 0) {
+        return null;
+      }
+
+      // 按 updatedAt 降序排列，取最新
+      matching.sort(function (a, b) {
+        return b.data.updatedAt - a.data.updatedAt;
+      });
+
+      var latest = matching[0];
+
+      // 恢复状态
+      _agentState.messages = JSON.parse(JSON.stringify(latest.data.messages));
+      _agentState.sessionId = latest.sessionId;
+      _agentState.activeOrigin = origin;
+
+      // 渲染消息到面板（跳过 system prompt）
+      if (window.GobyPanel) {
+        window.GobyPanel.renderWelcome();
+        for (var ri = 0; ri < _agentState.messages.length; ri++) {
+          var msg = _agentState.messages[ri];
+          if (msg.role === 'system') continue;
+
+          var panelRole = msg.role;
+          if (panelRole === 'assistant') panelRole = 'bot';
+          if (panelRole === 'tool') {
+            var isError = typeof msg.content === 'string' && msg.content.startsWith('Error:');
+            panelRole = isError ? 'tool-error' : 'tool';
+          }
+
+          if (window.GobyPanel && typeof window.GobyPanel.appendMessage === 'function') {
+            window.GobyPanel.appendMessage(panelRole, msg.content);
+          }
+        }
+      }
+
+      return latest.data;
+    });
+  }
+
+  /**
+   * loadSessionById — 按 sessionId 加载指定会话
+   * @param {string} sessionId
+   * @returns {Promise<Object|null>} 会话数据或 null
+   */
+  function loadSessionById(sessionId) {
+    return chrome.storage.local.get('gobySessions').then(function (result) {
+      var sessions = result.gobySessions || {};
+      var session = sessions[sessionId];
+      if (!session) return null;
+
+      // 恢复状态
+      _agentState.messages = JSON.parse(JSON.stringify(session.messages));
+      _agentState.sessionId = sessionId;
+      _agentState.activeOrigin = session.origin;
+
+      // 渲染消息
+      if (window.GobyPanel) {
+        window.GobyPanel.renderWelcome();
+        for (var ri = 0; ri < _agentState.messages.length; ri++) {
+          var msg = _agentState.messages[ri];
+          if (msg.role === 'system') continue;
+
+          var panelRole = msg.role;
+          if (panelRole === 'assistant') panelRole = 'bot';
+          if (panelRole === 'tool') {
+            var isError = typeof msg.content === 'string' && msg.content.startsWith('Error:');
+            panelRole = isError ? 'tool-error' : 'tool';
+          }
+
+          if (window.GobyPanel && typeof window.GobyPanel.appendMessage === 'function') {
+            window.GobyPanel.appendMessage(panelRole, msg.content);
+          }
+        }
+      }
+
+      return session;
+    });
+  }
+
+  /**
+   * listSessionsForOrigin — 列出某域名所有会话（元数据，不含消息内容）
+   * @param {string} origin
+   * @returns {Promise<Array<{sessionId, title, preview, updatedAt, messageCount}>>}
+   */
+  function listSessionsForOrigin(origin) {
+    return chrome.storage.local.get('gobySessions').then(function (result) {
+      var sessions = result.gobySessions || {};
+      var list = [];
+
+      var keys = Object.keys(sessions);
+      for (var ki = 0; ki < keys.length; ki++) {
+        var s = sessions[keys[ki]];
+        if (s.origin === origin) {
+          list.push({
+            sessionId: keys[ki],
+            origin: s.origin,
+            title: s.title,
+            preview: s.preview,
+            updatedAt: s.updatedAt,
+            messageCount: s.messageCount
+          });
+        }
+      }
+
+      // 按 updatedAt 降序
+      list.sort(function (a, b) { return b.updatedAt - a.updatedAt; });
+      return list;
+    });
+  }
+
+  /**
+   * getAllSessions — 获取所有会话列表（供侧栏使用）
+   * @returns {Promise<Array<{sessionId, origin, title, preview, updatedAt, messageCount}>>}
+   */
+  function getAllSessions() {
+    return chrome.storage.local.get('gobySessions').then(function (result) {
+      var sessions = result.gobySessions || {};
+      var list = [];
+
+      var keys = Object.keys(sessions);
+      for (var ki = 0; ki < keys.length; ki++) {
+        var s = sessions[keys[ki]];
+        list.push({
+          sessionId: keys[ki],
+          origin: s.origin,
+          title: s.title,
+          preview: s.preview,
+          updatedAt: s.updatedAt,
+          messageCount: s.messageCount
+        });
+      }
+
+      // 按 updatedAt 降序
+      list.sort(function (a, b) { return b.updatedAt - a.updatedAt; });
+      return list;
+    });
+  }
+
+  /**
+   * deleteSession — 删除单个会话 (SESS-04, D-18)
+   * 若删除的是当前活动会话，切换到同域名最新会话或创建新会话
+   * @param {string} sessionId
+   * @returns {Promise<void>}
+   */
+  function deleteSession(sessionId) {
+    return chrome.storage.local.get('gobySessions').then(function (result) {
+      var sessions = result.gobySessions || {};
+      var deletedOrigin = sessions[sessionId] ? sessions[sessionId].origin : null;
+
+      delete sessions[sessionId];
+
+      return chrome.storage.local.set({ gobySessions: sessions }).then(function () {
+        // 若删除的是当前活动会话
+        if (sessionId === _agentState.sessionId && deletedOrigin) {
+          return listSessionsForOrigin(deletedOrigin).then(function (list) {
+            if (list.length > 0) {
+              return loadSessionById(list[0].sessionId);
+            } else {
+              createSession(deletedOrigin);
+            }
+          });
+        }
+      });
+    });
+  }
+
+  /**
+   * deleteAllSessions — 清除全部会话
+   * 清除后创建新会话
+   * @returns {Promise<void>}
+   */
+  function deleteAllSessions() {
+    return chrome.storage.local.remove('gobySessions').then(function () {
+      var origin = _agentState.activeOrigin || window.location.origin;
+      createSession(origin);
+    });
+  }
+
+  /**
+   * cleanupOldSessions — LRU 淘汰 (SESS-03, D-18)
+   * 每次 saveSession 后调用。若会话超过 50 个，
+   * 按 updatedAt 升序排序删除最旧的 N-50 个
+   * @returns {Promise<void>}
+   */
+  function cleanupOldSessions() {
+    return chrome.storage.local.get('gobySessions').then(function (result) {
+      var sessions = result.gobySessions || {};
+      var keys = Object.keys(sessions);
+
+      if (keys.length <= 50) {
+        return;
+      }
+
+      // 按 updatedAt 升序排列（最旧在前）
+      keys.sort(function (a, b) {
+        return (sessions[a].updatedAt || 0) - (sessions[b].updatedAt || 0);
+      });
+
+      // 删除最旧的 N-50 个
+      var toRemove = keys.length - 50;
+      for (var ri = 0; ri < toRemove; ri++) {
+        delete sessions[keys[ri]];
+      }
+
+      return chrome.storage.local.set({ gobySessions: sessions });
+    });
+  }
+
+  /**
+   * switchToSession — 切换到指定会话
+   * 先保存当前会话，再加载目标会话
+   * @param {string} sessionId
+   * @returns {Promise<void>}
+   */
+  function switchToSession(sessionId) {
+    return saveSession().then(function () {
+      return loadSessionById(sessionId);
+    });
+  }
+
+  /**
+   * handleUrlChange — URL 变化时自动保存当前 + 加载新域名会话
+   * 由 popstate / hashchange 事件触发
+   * 通过 window.GobyAgent 调用以确保测试 spy 可捕获（Plan 03-03）
+   */
+  function handleUrlChange() {
+    var newOrigin = window.location.origin;
+
+    // 域名未变则忽略（可能只是 hash/query 变化）
+    if (newOrigin === _agentState.activeOrigin) return;
+
+    var agent = window.GobyAgent;
+    if (!agent || typeof agent.saveSession !== 'function') return;
+
+    agent.saveSession().then(function () {
+      return agent.loadSession(newOrigin);
+    }).then(function (session) {
+      if (!session) {
+        agent.createSession(newOrigin);
+      }
+    });
+  }
+
+  // ================================================================
   //  工具执行引擎 (GOBY_DESIGN.md §十六)
   // ================================================================
 
@@ -1421,7 +1781,11 @@
     _toolCallCounter: function () { return _agentState.toolCallCounter; },
     setToolCallCounter: function (n) { _agentState.toolCallCounter = n; },
     getToolCallFailCounts: function () { return _toolCallFailCounts; },
-    setMaxLoops: function (n) { MAX_LOOPS = n; }
+    setMaxLoops: function (n) { MAX_LOOPS = n; },
+    sessionIdForOrigin: sessionIdForOrigin,
+    saveSession: saveSession,
+    cleanupOldSessions: cleanupOldSessions,
+    getAllSessions: getAllSessions
   };
 
   // 暴露 GobyAgent 到全局
@@ -1438,14 +1802,51 @@
     compactConversationAsync: compactConversationAsync,
     SYSTEM_PROMPT: SYSTEM_PROMPT,
     MAX_LOOPS: MAX_LOOPS,
+    // Session management (Plan 03-03)
+    sessionIdForOrigin: sessionIdForOrigin,
+    createSession: createSession,
+    saveSession: saveSession,
+    loadSession: loadSession,
+    loadSessionById: loadSessionById,
+    listSessionsForOrigin: listSessionsForOrigin,
+    getAllSessions: getAllSessions,
+    deleteSession: deleteSession,
+    deleteAllSessions: deleteAllSessions,
+    cleanupOldSessions: cleanupOldSessions,
+    switchToSession: switchToSession,
     getState: function () {
       return {
         messages: _agentState.messages.slice(),
         isProcessing: _agentState.isProcessing,
         connectionStatus: _agentState.connectionStatus,
-        activeOrigin: _agentState.activeOrigin
+        activeOrigin: _agentState.activeOrigin,
+        sessionId: _agentState.sessionId
       };
     }
   };
+
+  // ---- Plan 03-03: 会话初始化 + URL 变化监听 ----
+  // 先同步创建新会话（确保消息历史初始化），再异步加载已保存会话
+  function initSession() {
+    var origin = window.location.origin;
+    // 同步创建会话（Plan 要求：createSession 初始化首个会话）
+    createSession(origin);
+    // 异步尝试加载已保存会话（loadSession 会替换初始创建）
+    loadSession(origin).then(function (session) {
+      if (session) {
+        // loadSession 已恢复消息历史和状态
+      }
+    });
+  }
+
+  // 立即初始化会话（面板未就绪时渲染静默跳过）
+  initSession();
+
+  // URL 变化监听 (SESS-01, D-16)
+  window.addEventListener('popstate', handleUrlChange);
+  window.addEventListener('hashchange', handleUrlChange);
+  window.addEventListener('beforeunload', function () {
+    saveSession();
+  });
 
 })();
