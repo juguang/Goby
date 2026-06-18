@@ -1376,6 +1376,37 @@
   }
 
   /**
+   * sanitizeMessages — 净化消息格式确保 API 兼容
+   * content 始终为字符串，tool_calls 始终为数组
+   * @param {Array} messages
+   * @returns {Array}
+   */
+  function sanitizeMessages(messages) {
+    var clean = [];
+    for (var i = 0; i < messages.length; i++) {
+      var m = messages[i];
+      var c = { role: m.role || 'user' };
+      c.content = (typeof m.content === 'string') ? m.content : '';
+      if (m.tool_calls) {
+        if (Array.isArray(m.tool_calls)) {
+          c.tool_calls = m.tool_calls;
+        } else {
+          var tcArr = [];
+          var keys = Object.keys(m.tool_calls);
+          for (var k = 0; k < keys.length; k++) {
+            tcArr.push(m.tool_calls[keys[k]]);
+          }
+          c.tool_calls = tcArr;
+        }
+      }
+      if (m.tool_call_id) c.tool_call_id = m.tool_call_id;
+      if (m.name) c.name = m.name;
+      clean.push(c);
+    }
+    return clean;
+  }
+
+  /**
    * callLLMStream — 流式 LLM 调用 (AGENT-02, D-01/D-02/D-04)
    * 通过 Service Worker 转发 SSE 流，逐 chunk 回调
    * 返回 Promise，在流完成时 resolve {content, tool_calls}
@@ -1389,30 +1420,8 @@
       _agentState.connectionStatus = 'green';
       GobyPanel.updateConnectionStatus('green');
 
-      // ★ 净化消息格式 — 确保 content 始终为字符串，tool_calls 始终为数组
-      // 部分 API 对 null content 或对象格式 tool_calls 严格校验
-      var cleanMessages = [];
-      for (var i = 0; i < messages.length; i++) {
-        var m = messages[i];
-        var clean = { role: m.role || 'user' };
-        clean.content = (typeof m.content === 'string') ? m.content : '';
-        if (m.tool_calls) {
-          if (Array.isArray(m.tool_calls)) {
-            clean.tool_calls = m.tool_calls;
-          } else {
-            // 对象格式 {'0': {...}} → 转为数组 [{...}]
-            var tcArr = [];
-            var keys = Object.keys(m.tool_calls);
-            for (var k = 0; k < keys.length; k++) {
-              tcArr.push(m.tool_calls[keys[k]]);
-            }
-            clean.tool_calls = tcArr;
-          }
-        }
-        if (m.tool_call_id) clean.tool_call_id = m.tool_call_id;
-        if (m.name) clean.name = m.name;
-        cleanMessages.push(clean);
-      }
+      // ★ 净化消息格式 — 确保 API 兼容
+      var cleanMessages = sanitizeMessages(messages);
 
       // 构造 tools 参数（使用 nativeTools 的 function schema）
       var tools = nativeTools.map(function (t) {
@@ -1446,10 +1455,12 @@
    * @returns {Promise<Object>} 完整响应 JSON
    */
   function callLLM(messages) {
+    // 同样净化消息格式（page_analyze 等非流式调用也走此路径）
+    var cleanMessages = sanitizeMessages(messages);
     return GobyStorage.getConfig().then(function (cfg) {
       return chrome.runtime.sendMessage({
         action: 'llm-request',
-        messages: messages
+        messages: cleanMessages
       });
     }).then(function (response) {
       return response;
