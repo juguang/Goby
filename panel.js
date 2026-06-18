@@ -375,7 +375,21 @@
     '.goby-sidebar-new-btn { background: #667eea; color: #ffffff; }',
     '.goby-sidebar-new-btn:hover { opacity: 0.85; }',
     '.goby-sidebar-clear-btn { background: transparent; color: #ef4444; border: 1px solid #e5e7eb; }',
-    '.goby-sidebar-clear-btn:hover { background: #fef2f2; }'
+    '.goby-sidebar-clear-btn:hover { background: #fef2f2; }',
+    /* 工具调用状态指示器 — 带脉冲动画 */
+    '.goby-tool-call-wrapper { display: flex; justify-content: flex-start; padding: 2px 4px; }',
+    '.goby-tool-call-badge { display: inline-flex; align-items: center; gap: 6px;',
+    '  padding: 6px 12px; border-radius: 16px; font-size: 12px;',
+    '  background: #eef2ff; color: #4f46e5; border: 1px solid #c7d2fe;',
+    '  animation: toolCallPulse 1.2s ease-in-out infinite; }',
+    '.goby-tool-call-badge .goby-tool-icon { font-size: 14px; }',
+    '.goby-tool-call-badge .goby-tool-name { font-weight: 600; }',
+    '.goby-tool-call-badge .goby-tool-status { font-size: 11px; opacity: 0.7; }',
+    '.goby-tool-call-badge.done { animation: none; background: #f0fdf4;',
+    '  border-color: #86efac; color: #166534; }',
+    '.goby-tool-call-badge.error { animation: none; background: #fef2f2;',
+    '  border-color: #fca5a5; color: #991b1b; }',
+    '@keyframes toolCallPulse { 0%, 100% { opacity: 1; } 50% { opacity: 0.6; } }'
   ].join('\n');
 
   // ============================================================
@@ -547,6 +561,59 @@
 
     // 自动滚动到底部
     _messagesContainer.scrollTop = _messagesContainer.scrollHeight;
+  }
+
+  // ============================================================
+  //  appendToolCall — 添加工具调用状态指示器
+  //  在工具执行期间显示脉冲动画的 "🔧 正在调用: xxx"
+  //  工具完成后调用 completeToolCall 更新状态
+  // ============================================================
+
+  /**
+   * 显示工具调用状态指示器
+   * @param {string} name - 工具名称
+   * @returns {HTMLElement} 状态元素（用于后续 completeToolCall 更新）
+   */
+  function appendToolCall(name) {
+    if (!_messagesContainer) return null;
+    // 如果欢迎消息可见，隐藏它
+    if (_welcomeEl && _welcomeEl.style.display !== 'none') {
+      _welcomeEl.style.display = 'none';
+    }
+
+    var wrapperDiv = document.createElement('div');
+    wrapperDiv.className = 'goby-tool-call-wrapper';
+
+    var badge = document.createElement('div');
+    badge.className = 'goby-tool-call-badge';
+    badge.innerHTML = '<span class="goby-tool-icon">🔧</span>'
+      + '<span class="goby-tool-name">' + name + '</span>'
+      + '<span class="goby-tool-status">处理中...</span>';
+
+    wrapperDiv.appendChild(badge);
+    _messagesContainer.appendChild(wrapperDiv);
+    _messagesContainer.scrollTop = _messagesContainer.scrollHeight;
+
+    return badge;
+  }
+
+  /**
+   * 更新工具调用状态指示器
+   * @param {HTMLElement} badgeEl - appendToolCall 返回的元素
+   * @param {string} result - 工具执行结果
+   */
+  function completeToolCall(badgeEl, result) {
+    if (!badgeEl) return;
+    var isError = typeof result === 'string' && result.startsWith('Error:');
+    badgeEl.className = 'goby-tool-call-badge ' + (isError ? 'error' : 'done');
+    var icon = isError ? '❌' : '✅';
+    var maxShow = 60;
+    var shortResult = (typeof result === 'string' && result.length > maxShow)
+      ? result.substring(0, maxShow) + '...'
+      : result || '';
+    badgeEl.innerHTML = '<span class="goby-tool-icon">' + icon + '</span>'
+      + '<span class="goby-tool-name">' + (badgeEl.querySelector('.goby-tool-name') ? badgeEl.querySelector('.goby-tool-name').textContent : '') + '</span>'
+      + '<span class="goby-tool-status">' + escapeHtml(shortResult) + '</span>';
   }
 
   // ============================================================
@@ -1318,6 +1385,11 @@
    * @param {string} content - 原始 LLM 输出 / markdown
    * @returns {string} 消毒后的安全 HTML
    */
+  function escapeHtml(str) {
+    if (typeof str !== 'string') return '';
+    return str.replace(/&/g, '&amp;').replace(/</g, '&lt;').replace(/>/g, '&gt;').replace(/"/g, '&quot;').replace(/'/g, '&#039;');
+  }
+
   function renderMarkdown(content) {
     if (!content) return '';
     var html;
@@ -1534,6 +1606,20 @@
      * @param {boolean} isDone
      */
     appendStreamingChunk: appendStreamingChunk,
+
+    /**
+     * 显示工具调用状态指示器
+     * @param {string} name - 工具名称
+     * @returns {HTMLElement} 状态元素
+     */
+    appendToolCall: appendToolCall,
+
+    /**
+     * 更新工具调用状态指示器
+     * @param {HTMLElement} badgeEl - appendToolCall 返回的元素
+     * @param {string} result - 工具执行结果
+     */
+    completeToolCall: completeToolCall,
 
     /**
      * 发送当前输入内容

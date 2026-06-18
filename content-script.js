@@ -2092,6 +2092,12 @@
           }
           _agentState.toolCallCounter++;
 
+          // 显示工具调用状态指示器（脉冲动画，非干等）
+          var toolBadge = null;
+          if (window.GobyPanel && typeof window.GobyPanel.appendToolCall === 'function') {
+            toolBadge = GobyPanel.appendToolCall(tc.function.name || tc.name || '');
+          }
+
           // 执行工具（带超时和重试）
           var resultContent = await executeWithTimeout({
             id: tc.id,
@@ -2101,6 +2107,11 @@
               arguments: tc.function.arguments
             }
           });
+
+          // 更新工具调用状态（✅ 完成 / ❌ 错误）
+          if (toolBadge && window.GobyPanel && typeof window.GobyPanel.completeToolCall === 'function') {
+            GobyPanel.completeToolCall(toolBadge, resultContent);
+          }
 
           results.push({
             tool_call_id: tc.id || '',
