@@ -75,6 +75,10 @@ global.chrome = {
   },
   tabs: {
     sendMessage: jest.fn(),
-    query: jest.fn()
+    query: jest.fn(),
+    captureVisibleTab: jest.fn()
+  },
+  scripting: {
+    executeScript: jest.fn()
   }
 };
