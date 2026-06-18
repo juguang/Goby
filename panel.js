@@ -269,6 +269,16 @@
     '.goby-status-dot.gray { background-color: #9ca3af; }',
     '.goby-status-round { font-size: 11px; color: #6b7280; white-space: nowrap; }',
     '',
+    '/* 拖拽把手 */',
+    '.goby-resize-handle { height: 4px; background: transparent;',
+    '  cursor: ns-resize; flex-shrink: 0; transition: background 0.15s;',
+    '  border-top: 1px solid #e5e7eb; }',
+    '.goby-resize-handle:hover { background: rgba(102,126,234,0.1); }',
+    '.goby-resize-handle:active { background: rgba(102,126,234,0.2); }',
+    '',
+    '/* 拖拽时防止文字选中 */',
+    '.goby-panel.resizing { user-select: none; }',
+    '',
     '@keyframes msgFadeIn {',
     '  from { opacity: 0; transform: translateY(8px); }',
     '  to { opacity: 1; transform: translateY(0); }',
@@ -318,6 +328,9 @@
   var _statusModelEl = null;
   var _statusDotEl = null;
   var _statusRoundEl = null;
+
+  // 拖拽把手 DOM 引用
+  var _resizeHandle = null;
 
   // ============================================================
   //  持久化面板状态到 chrome.storage.local
@@ -663,11 +676,19 @@
     statusBar.appendChild(statusLeft);
     statusBar.appendChild(statusRoundEl);
 
+    // ---- 拖拽把手 ----
+    var resizeHandle = document.createElement('div');
+    resizeHandle.className = 'goby-resize-handle';
+    // 内联样式确保 JSDOM 测试可读取（同时 CSS class 提供相同约束）
+    resizeHandle.style.height = '4px';
+    resizeHandle.style.cursor = 'ns-resize';
+
     // 组装面板
     panel.appendChild(header);
     panel.appendChild(chatArea);
     panel.appendChild(inputBar);
     panel.appendChild(statusBar);
+    panel.appendChild(resizeHandle);
 
     // 组装 Shadow DOM
     shadow.appendChild(styleEl);
@@ -689,6 +710,7 @@
     _statusModelEl = statusModelEl;
     _statusDotEl = statusDotEl;
     _statusRoundEl = statusRoundEl;
+    _resizeHandle = resizeHandle;
 
     // ---- 事件绑定 ----
 
@@ -717,6 +739,49 @@
     // 发送按钮 click
     sendBtn.addEventListener('click', function () {
       sendMessage();
+    });
+
+    // ---- 拖拽 resize 逻辑 ----
+    // D-04: 高度范围 300-700px | D-05: 宽度不变、位置不变
+    var panelEl = panel;
+    var isResizing = false;
+    var startY = 0;
+    var startHeight = 0;
+
+    function onMouseMove(e) {
+      if (!isResizing) return;
+      e.preventDefault();
+
+      var deltaY = e.clientY - startY;
+      var newHeight = startHeight + deltaY;
+
+      // D-04: 限制 300-700px
+      newHeight = Math.min(700, Math.max(300, newHeight));
+
+      // D-05: 仅设置高度，宽度和位置不变
+      panelEl.style.height = newHeight + 'px';
+    }
+
+    function onMouseUp(e) {
+      if (!isResizing) return;
+      isResizing = false;
+      panelEl.classList.remove('resizing');
+
+      document.removeEventListener('mousemove', onMouseMove);
+      document.removeEventListener('mouseup', onMouseUp);
+    }
+
+    resizeHandle.addEventListener('mousedown', function (e) {
+      e.preventDefault();
+      isResizing = true;
+      startY = e.clientY;
+      // 优先使用 offsetHeight（真实浏览器），回退到 style.height（JSDOM 无布局时）
+      startHeight = panelEl.offsetHeight || parseInt(panelEl.style.height, 10) || 480;
+      panelEl.classList.add('resizing');
+
+      // 在 document 上绑定 mousemove 和 mouseup（支持拖出面板）
+      document.addEventListener('mousemove', onMouseMove);
+      document.addEventListener('mouseup', onMouseUp);
     });
   }
 
