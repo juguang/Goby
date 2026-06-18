@@ -596,6 +596,19 @@
     '- clipboard_write: 写入剪贴板\n' +
     '- get_current_time: 获取当前时间';
 
+  /**
+   * getAttributes — 将元素的 NamedNodeMap 转换为纯对象
+   * @param {Element} el
+   * @returns {Object}
+   */
+  function getAttributes(el) {
+    var attrs = {};
+    for (var a = 0; a < el.attributes.length; a++) {
+      attrs[el.attributes[a].name] = el.attributes[a].value;
+    }
+    return attrs;
+  }
+
   // ---- 15 个工具定义 (GOBY_DESIGN.md §四) ----
   // Phase 3 实现 4 个简单工具，其余返回占位消息
   var nativeTools = [
@@ -616,7 +629,72 @@
         }
       },
       timeout: 15000,
-      execute: function () { return '工具将在后续版本可用'; }
+      execute: function (args) {
+        try {
+          var selector = args.selector;
+          var property = args.property || 'text';
+          var index = args.index !== undefined ? args.index : 0;
+          var elements = document.querySelectorAll(selector);
+
+          if (elements.length === 0) {
+            return 'No elements found matching: ' + selector;
+          }
+
+          if (index === -1) {
+            var results = [];
+            for (var i = 0; i < elements.length; i++) {
+              var el = elements[i];
+              var entry = {
+                index: i,
+                tag: el.tagName,
+                id: el.id,
+                className: el.className
+              };
+              var elText = (el.innerText || el.textContent || '').trim();
+              if (property === 'text') entry.text = elText;
+              else if (property === 'value') entry.value = el.value !== undefined ? el.value : '';
+              else if (property === 'html') entry.html = el.innerHTML;
+              else if (property === 'attributes') entry.attributes = getAttributes(el);
+              else if (property === 'all') {
+                entry.text = elText;
+                entry.value = el.value !== undefined ? el.value : '';
+                entry.html = el.innerHTML;
+                entry.attributes = getAttributes(el);
+              }
+              results.push(entry);
+            }
+            return JSON.stringify(results, null, 2);
+          }
+
+          if (index >= elements.length) {
+            return 'Index ' + index + ' out of range. Found ' + elements.length + ' elements.';
+          }
+
+          var el = elements[index];
+          var result = {
+            tag: el.tagName,
+            id: el.id,
+            className: el.className,
+            selector: selector
+          };
+
+          var elText = (el.innerText || el.textContent || '').trim();
+          if (property === 'text') result.text = elText;
+          else if (property === 'value') result.value = el.value !== undefined ? el.value : '';
+          else if (property === 'html') result.html = el.innerHTML;
+          else if (property === 'attributes') result.attributes = getAttributes(el);
+          else if (property === 'all') {
+            result.text = elText;
+            result.value = el.value !== undefined ? el.value : '';
+            result.html = el.innerHTML;
+            result.attributes = getAttributes(el);
+          }
+
+          return JSON.stringify(result, null, 2);
+        } catch (e) {
+          return 'Query failed: ' + e.message;
+        }
+      }
     },
     {
       type: 'function',
@@ -631,7 +709,66 @@
         }
       },
       timeout: 15000,
-      execute: function () { return '工具将在后续版本可用'; }
+      execute: function (args) {
+        try {
+          var type = args.type || 'all';
+
+          var selectors = [];
+          if (type === 'all' || type === 'inputs') {
+            selectors.push('input', 'textarea', 'select');
+          }
+          if (type === 'all' || type === 'buttons') {
+            selectors.push('button', 'input[type="button"]', 'input[type="submit"]', 'input[type="reset"]');
+          }
+          if (type === 'all' || type === 'links') selectors.push('a[href]');
+          if (type === 'all' || type === 'selects') selectors.push('select');
+          if (type === 'all' || type === 'checkboxes') selectors.push('input[type="checkbox"]');
+          if (type === 'all' || type === 'radios') selectors.push('input[type="radio"]');
+
+          var elementSet = [];
+          for (var s = 0; s < selectors.length; s++) {
+            var nodes = document.querySelectorAll(selectors[s]);
+            for (var n = 0; n < nodes.length; n++) {
+              if (elementSet.indexOf(nodes[n]) === -1) {
+                elementSet.push(nodes[n]);
+              }
+            }
+          }
+
+          if (elementSet.length === 0) {
+            return 'No interactive elements found of type: ' + type;
+          }
+
+          var results = [];
+          for (var i = 0; i < elementSet.length; i++) {
+            var el = elementSet[i];
+            var info = {
+              index: i,
+              tag: el.tagName.toLowerCase(),
+              id: el.id || '',
+              className: el.className || ''
+            };
+
+            // All fields that are available
+            if (el.type) info.type = el.type;
+            if (el.name) info.name = el.name;
+            if (el.placeholder !== undefined && el.placeholder) info.placeholder = el.placeholder;
+            if (el.href) info.href = el.href;
+            if (el.options !== undefined) info.option_count = el.options.length;
+            if (el.checked !== undefined) info.checked = el.checked;
+
+            // Text for buttons and links
+            var text = (el.tagName === 'BUTTON' || el.tagName === 'A') ? (el.innerText || el.textContent || '').trim() : '';
+            if (text) info.text = text;
+
+            results.push(info);
+          }
+
+          return JSON.stringify(results, null, 2);
+        } catch (e) {
+          return 'Error: 列出元素失败 - ' + e.message;
+        }
+      }
     },
     {
       type: 'function',
