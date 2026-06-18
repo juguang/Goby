@@ -785,7 +785,51 @@
         }
       },
       timeout: 30000,
-      execute: function () { return '工具将在后续版本可用'; }
+      execute: function (args) {
+        var selector = args.selector;
+        var timeout = args.timeout || 10000;
+        var time = args.time;
+
+        if (selector) {
+          // Selector mode: check if already exists, else use MutationObserver
+          if (document.querySelector(selector)) {
+            return 'Element already exists: ' + selector;
+          }
+
+          return new Promise(function (resolve) {
+            var startTime = Date.now();
+            var observer = new MutationObserver(function () {
+              try {
+                if (document.querySelector(selector)) {
+                  observer.disconnect();
+                  resolve('Element found: ' + selector + ' after ' + (Date.now() - startTime) + 'ms');
+                }
+              } catch (e) {
+                // 忽略环境错误（如 JSDOM 上下文不一致）
+              }
+            });
+            observer.observe(document.body, { childList: true, subtree: true });
+
+            setTimeout(function () {
+              try {
+                observer.disconnect();
+              } catch (e) { /* ignore */ }
+              resolve("Timeout: element '" + selector + "' not found after " + timeout + 'ms');
+            }, timeout);
+          });
+        }
+
+        if (time !== undefined) {
+          // Time mode: wait specified ms
+          return new Promise(function (resolve) {
+            setTimeout(function () {
+              resolve('Waited ' + time + 'ms');
+            }, time);
+          });
+        }
+
+        return 'Error: wait failed - selector or time is required';
+      }
     },
     {
       type: 'function',
@@ -801,7 +845,26 @@
         }
       },
       timeout: 15000,
-      execute: function () { return '工具将在后续版本可用'; }
+      execute: function (args) {
+        if (!args.expression || typeof args.expression !== 'string') {
+          return 'Error: expression is required';
+        }
+
+        // D-26 / T-04-01: expression 通过 args 序列化传递，不拼接 eval
+        // 通过 Service Worker 在 MAIN world 执行
+        return new Promise(function (resolve) {
+          chrome.runtime.sendMessage(
+            { action: 'page-evaluate', expression: args.expression },
+            function (response) {
+              if (chrome.runtime.lastError) {
+                resolve('Error: page_evaluate failed - ' + chrome.runtime.lastError.message);
+              } else {
+                resolve(String(response));
+              }
+            }
+          );
+        });
+      }
     },
     // 页面操作工具
     {

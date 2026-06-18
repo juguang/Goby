@@ -407,6 +407,32 @@
       return handleLLMRequest(message, sendResponse);
     }
 
+    // T-04-04: page-evaluate — 通过 MAIN world 执行 JS (D-07)
+    if (message.action === 'page-evaluate') {
+      if (!sender.tab) {
+        sendResponse('Error: 无法获取 tabId');
+        return true;
+      }
+      chrome.scripting.executeScript({
+        target: { tabId: sender.tab.id },
+        world: 'MAIN',
+        func: function (expr) {
+          try {
+            return eval(expr);
+          } catch (e) {
+            return 'Error: ' + e.message;
+          }
+        },
+        args: [message.expression]
+      }).then(function (results) {
+        var result = results && results[0] && results[0].result;
+        sendResponse(String(result !== undefined ? result : ''));
+      }).catch(function (err) {
+        sendResponse('Error: ' + (err.message || '执行失败'));
+      });
+      return true; // 保持 sendResponse 异步通道开启
+    }
+
     return false;
   });
 
