@@ -6,6 +6,7 @@ var chromeMockData = {};
 global.chrome = {
   runtime: {
     lastError: null,
+    sendMessage: jest.fn(),
     onMessage: {
       addListener: jest.fn()
     },

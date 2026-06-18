@@ -283,6 +283,17 @@
     '  from { opacity: 0; transform: translateY(8px); }',
     '  to { opacity: 1; transform: translateY(0); }',
     '}',
+    /* Plan 03-01: 流式光标闪烁指示器 */
+    '.goby-cursor {',
+    '  display: inline;',
+    '  color: #667eea;',
+    '  font-weight: 700;',
+    '  animation: gobyBlink 0.8s step-end infinite;',
+    '}',
+    '@keyframes gobyBlink {',
+    '  0%, 100% { opacity: 1; }',
+    '  50% { opacity: 0; }',
+    '}',
     /* 消息时间戳（简约） */
     '.goby-msg-time {',
     '  font-size: 10px;',
@@ -428,10 +439,17 @@
     var wrapperDiv = document.createElement('div');
     wrapperDiv.className = wrapperClass;
 
-    // 创建气泡 — SEC-02: 使用 textContent，绝不使用 innerHTML
+    // 创建气泡
+    // SEC-02: 用户消息使用 textContent，机器人消息使用 renderMarkdown → innerHTML
     var bubbleDiv = document.createElement('div');
     bubbleDiv.className = 'goby-msg-bubble ' + bubbleClass;
-    bubbleDiv.textContent = content;
+    if (role === 'bot') {
+      // Bot 消息: marked.parse → DOMPurify.sanitize → innerHTML (SEC-01)
+      bubbleDiv.innerHTML = renderMarkdown(content);
+    } else {
+      // 用户/工具消息: textContent (SEC-02)
+      bubbleDiv.textContent = content;
+    }
     // 内联动画确保 JSDOM 测试可检测（同时 CSS @keyframes 提供真实浏览器支持）
     bubbleDiv.style.animation = 'msgFadeIn 200ms ease-out';
 
@@ -457,6 +475,15 @@
     // 清空输入框并重置高度
     _inputEl.value = '';
     _inputEl.style.height = '40px';
+
+    // Plan 03-01: 通过 GobyAgent 发送消息（流式 LLM 调用）
+    if (window.GobyAgent && typeof window.GobyAgent.sendMessage === 'function') {
+      // 流式处理期间禁用输入
+      if (_inputEl) _inputEl.disabled = true;
+      if (_sendBtn) _sendBtn.disabled = true;
+      window.GobyAgent.sendMessage(text);
+    }
+
     _inputEl.focus();
   }
 
@@ -899,6 +926,114 @@
   }
 
   // ============================================================
+  //  Plan 03-01: renderMarkdown & appendStreamingChunk
+  //  SEC-01: marked.parse → DOMPurify.sanitize 安全管道
+  // ============================================================
+
+  /**
+   * renderMarkdown — 安全渲染管道 (SEC-01, D-20/D-21/D-22)
+   * @param {string} content - 原始 LLM 输出 / markdown
+   * @returns {string} 消毒后的安全 HTML
+   */
+  function renderMarkdown(content) {
+    if (!content) return '';
+    var html;
+    try {
+      html = window.marked.parse(content);
+    } catch (e) {
+      var textNode = document.createTextNode(content);
+      html = textNode.textContent;
+    }
+    // DOMPurify 可能未加载（测试环境），回退到 textContent 编码文本
+    if (typeof window.DOMPurify !== 'undefined' && typeof window.DOMPurify.sanitize === 'function') {
+      return window.DOMPurify.sanitize(html, {
+        ALLOWED_TAGS: [
+          'p', 'br', 'strong', 'em', 'b', 'i', 'code', 'pre',
+          'ul', 'ol', 'li', 'h1', 'h2', 'h3', 'h4', 'h5', 'h6',
+          'a', 'blockquote', 'hr',
+          'table', 'thead', 'tbody', 'tr', 'th', 'td',
+          'img', 'del'
+        ],
+        ALLOWED_ATTR: ['href', 'target', 'rel', 'src', 'alt', 'class']
+      });
+    }
+    // 没有 DOMPurify 时，使用 textContent 注入
+    var textNode = document.createTextNode(html);
+    return textNode.textContent;
+  }
+
+  /**
+   * 流式气泡渲染 — 当前正在流式渲染的气泡引用
+   */
+  var _streamingBubble = null;
+
+  /**
+   * appendStreamingChunk — 流式追加内容到气泡
+   * 首次调用创建 Bot 气泡 + 光标 span
+   * 后续调用追加 textContent
+   * isDone=true 时执行 renderMarkdown → innerHTML 最终渲染
+   * @param {string} content - 文本片段
+   * @param {boolean} isDone - 是否流结束
+   */
+  function appendStreamingChunk(content, isDone) {
+    if (!_messagesContainer) return;
+
+    // 如果欢迎消息可见，隐藏它
+    if (_welcomeEl && _welcomeEl.style.display !== 'none') {
+      _welcomeEl.style.display = 'none';
+    }
+
+    if (isDone) {
+      // 流结束：移除光标 → 执行 renderMarkdown → innerHTML 最终渲染
+      if (_streamingBubble) {
+        var cursor = _streamingBubble.querySelector('.goby-cursor');
+        if (cursor) cursor.remove();
+        _streamingBubble.innerHTML = renderMarkdown(content || '');
+        _streamingBubble = null;
+      }
+      // 自动滚动到底部
+      _messagesContainer.scrollTop = _messagesContainer.scrollHeight;
+      return;
+    }
+
+    // 流式 chunk
+    if (!_streamingBubble) {
+      // 创建新的 Bot 气泡
+      var wrapperDiv = document.createElement('div');
+      wrapperDiv.className = 'goby-msg-bot-wrapper';
+
+      var bubbleDiv = document.createElement('div');
+      bubbleDiv.className = 'goby-msg-bubble goby-msg-bot';
+      bubbleDiv.style.animation = 'msgFadeIn 200ms ease-out';
+
+      // 文本内容 + 闪烁光标
+      var textSpan = document.createElement('span');
+      textSpan.textContent = content;
+
+      var cursorSpan = document.createElement('span');
+      cursorSpan.className = 'goby-cursor';
+      cursorSpan.textContent = '|';
+
+      bubbleDiv.appendChild(textSpan);
+      bubbleDiv.appendChild(cursorSpan);
+      wrapperDiv.appendChild(bubbleDiv);
+      _messagesContainer.appendChild(wrapperDiv);
+      _streamingBubble = bubbleDiv;
+    } else {
+      // 追加到现有气泡（在光标前插入）
+      var cursor = _streamingBubble.querySelector('.goby-cursor');
+      if (cursor) {
+        cursor.insertAdjacentText('beforebegin', content);
+      } else {
+        _streamingBubble.appendChild(document.createTextNode(content));
+      }
+    }
+
+    // 每 chunk 自动滚动到底部
+    _messagesContainer.scrollTop = _messagesContainer.scrollHeight;
+  }
+
+  // ============================================================
   //  公共 API — GobyPanel
   //  保持向后兼容（Phase 1 接口签名不变）
   //  新增: appendMessage, sendMessage, renderWelcome, clearChat,
@@ -1001,9 +1136,17 @@
     /**
      * 添加消息气泡到聊天区域
      * @param {string} role - 'user', 'bot', 'tool', 'tool-error'
-     * @param {string} content - 消息内容（通过 textContent 注入，SEC-02）
+     * @param {string} content - 用户消息通过 textContent 注入，Bot 消息通过 renderMarkdown → innerHTML
      */
     appendMessage: appendMessage,
+
+    /**
+     * 流式追加内容到气泡（Plan 03-01）
+     * 首次调用创建 Bot 气泡 + 光标，后续追加 textContent，isDone=true 时执行 renderMarkdown 最终渲染
+     * @param {string} content
+     * @param {boolean} isDone
+     */
+    appendStreamingChunk: appendStreamingChunk,
 
     /**
      * 发送当前输入内容
@@ -1049,6 +1192,11 @@
      * 聊天区域容器引用
      */
     _chatArea: null,
+
+    /**
+     * 消息容器引用（Plan 03-01）
+     */
+    _messagesContainer: null,
 
     /**
      * 输入框引用
@@ -1097,6 +1245,7 @@
       window.GobyPanel._panelContainer = _host;
       window.GobyPanel._chatArea = _chatArea;
       window.GobyPanel._inputEl = _inputEl;
+      window.GobyPanel._messagesContainer = _messagesContainer;
     }
   };
 })();

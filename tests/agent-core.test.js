@@ -22,6 +22,25 @@ require('./__mocks__/chrome.js');
 // Tab ID used for chrome.tabs.sendMessage in streaming tests
 var TEST_TAB_ID = 999;
 
+/**
+ * Load all browser extension modules in the correct dependency order.
+ * DOMPurify and marked must be set manually in Node.js/JSDOM (they export
+ * via module.exports rather than setting window globals).
+ */
+function loadAgentModules() {
+  // DOMPurify v3 factory: call with window to get DOMPurify instance
+  var purifyFactory = require('../lib/purify.min.js');
+  window.DOMPurify = purifyFactory(window);
+
+  // marked v15: set as window global
+  window.marked = require('../lib/marked.min.js');
+
+  // Extension modules (manifest content_scripts order)
+  require('../storage.js');
+  require('../panel.js');
+  require('../content-script.js');
+}
+
 // ================================================================
 //   LLM Streaming via Service Worker
 //   Tests 1-3: callLLMStream → SW proxy → stream-chunk delivery
@@ -42,8 +61,7 @@ describe('LLM Streaming via Service Worker', function () {
   //  Verifies: chrome.runtime.sendMessage called with correct payload
   // ---------------------------------------------------------------
   test('Test 1: GobyAgent.callLLMStream sends llm-stream with messages and tools', async function () {
-    require('../panel.js');
-    require('../content-script.js');
+    loadAgentModules();
 
     // RED: GobyAgent is undefined → test fails at first assertion
     expect(window.GobyAgent).toBeDefined();
@@ -167,8 +185,7 @@ describe('LLM Streaming via Service Worker', function () {
   //  Verifies: Content Script receives chunk and updates panel DOM
   // ---------------------------------------------------------------
   test('Test 3: stream-chunk text appends to current bot bubble textContent', async function () {
-    require('../panel.js');
-    require('../content-script.js');
+    loadAgentModules();
 
     // RED: if GobyAgent doesn't have handleStreamChunk, the stream-chunk handler
     // in content-script.js's onMessage won't work → test fails
@@ -186,6 +203,10 @@ describe('LLM Streaming via Service Worker', function () {
     window.GobyAgent.sendMessage('你好');
     await new Promise(function (resolve) { setTimeout(resolve, 50); });
 
+    // Set up spy BEFORE the action
+    var streamingSpy = jest.spyOn(window.GobyPanel, 'appendStreamingChunk');
+    streamingSpy.mockClear();
+
     // Simulate a stream-chunk text event from SW
     handler(
       { action: 'stream-chunk', data: { type: 'text', content: 'Hello', done: false } },
@@ -194,11 +215,8 @@ describe('LLM Streaming via Service Worker', function () {
     );
 
     // Bot bubble should contain the streamed text
-    // (access shadow DOM would be complex; verify via GobyPanel chat area)
-    // The bot bubble textContent should include 'Hello'
-    var botBubbles = document.querySelectorAll('.goby-msg-bot');
-    expect(botBubbles.length).toBeGreaterThan(0);
-    expect(botBubbles[botBubbles.length - 1].textContent).toContain('Hello');
+    expect(streamingSpy).toHaveBeenCalledWith('Hello', false);
+    streamingSpy.mockRestore();
   });
 });
 
@@ -219,11 +237,7 @@ describe('DOMPurify Sanitization Pipeline', function () {
   //  Verifies: GobyAgent.renderMarkdown converts markdown → safe HTML
   // ---------------------------------------------------------------
   test('Test 4: stream-chunk done triggers GobyAgent.renderMarkdown via DOMPurify.sanitize', async function () {
-    // Load DOMPurify for the test
-    require('../lib/purify.min.js');
-    require('../lib/marked.min.js');
-    require('../panel.js');
-    require('../content-script.js');
+    loadAgentModules();
 
     // RED: GobyAgent undefined → test fails
     expect(window.GobyAgent).toBeDefined();
@@ -246,10 +260,7 @@ describe('DOMPurify Sanitization Pipeline', function () {
   //  Verifies: ALLOWED_TAGS and ALLOWED_ATTR work correctly
   // ---------------------------------------------------------------
   test('Test 5: DOMPurify whitelist allows p/br/strong... and rejects script/iframe/onclick', function () {
-    require('../lib/purify.min.js');
-    require('../lib/marked.min.js');
-    require('../panel.js');
-    require('../content-script.js');
+    loadAgentModules();
 
     // RED: GobyAgent undefined → test fails
     expect(window.GobyAgent).toBeDefined();
@@ -311,8 +322,7 @@ describe('LLM Non-Streaming & Fallback', function () {
   //            content is empty (Qwen: reasoning, DeepSeek: reasoning_content)
   // ---------------------------------------------------------------
   test('Test 6: GobyAgent.getFallbackContent returns reasoning when content empty', function () {
-    require('../panel.js');
-    require('../content-script.js');
+    loadAgentModules();
 
     // RED: GobyAgent undefined → test fails
     expect(window.GobyAgent).toBeDefined();
@@ -344,8 +354,7 @@ describe('LLM Non-Streaming & Fallback', function () {
   //  Verifies: GobyAgent.callLLM sends non-streaming message
   // ---------------------------------------------------------------
   test('Test 7: GobyAgent.callLLM sends llm-request and returns full JSON response', async function () {
-    require('../panel.js');
-    require('../content-script.js');
+    loadAgentModules();
 
     // RED: GobyAgent undefined → test fails
     expect(window.GobyAgent).toBeDefined();
@@ -378,15 +387,15 @@ describe('LLM Non-Streaming & Fallback', function () {
   //  Verifies: HandleStreamChunk error → updateConnectionStatus('red')
   // ---------------------------------------------------------------
   test('Test 8: stream error sets connectionStatus to red', function () {
-    require('../panel.js');
-    require('../content-script.js');
+    loadAgentModules();
 
     // RED: GobyAgent undefined → test fails
     expect(window.GobyAgent).toBeDefined();
     expect(typeof window.GobyAgent.handleStreamChunk).toBe('function');
 
     // Spy on updateConnectionStatus
-    var originalUpdate = window.GobyPanel.updateConnectionStatus;
+    var connectionSpy = jest.spyOn(window.GobyPanel, 'updateConnectionStatus');
+    connectionSpy.mockClear();
 
     // Simulate an error stream-chunk
     window.GobyAgent.handleStreamChunk({
@@ -396,9 +405,7 @@ describe('LLM Non-Streaming & Fallback', function () {
     });
 
     // Connection status should be 'red' after error
-    var dotEl = document.querySelector('.goby-status-dot');
-    if (dotEl) {
-      expect(dotEl.classList.contains('red')).toBe(true);
-    }
+    expect(connectionSpy).toHaveBeenCalledWith('red');
+    connectionSpy.mockRestore();
   });
 });

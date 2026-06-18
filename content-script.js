@@ -28,6 +28,14 @@
       return true; // 异步响应
     }
 
+    // Plan 03-01: stream-chunk 事件 — 从 SW 接收 LLM 流式响应
+    if (message.action === 'stream-chunk') {
+      if (window.GobyAgent && typeof window.GobyAgent.handleStreamChunk === 'function') {
+        window.GobyAgent.handleStreamChunk(message.data);
+      }
+      return false;
+    }
+
     return false;
   });
 
@@ -532,5 +540,232 @@
   // ---- 暴露外部接口（供 panel.js 使用） ----
   window.openSettingsModal = openSettingsModal;
   window.closeSettingsModal = closeSettingsModal;
+
+  // ================================================================
+  //  GobyAgent — Agent 消息模块 (Plan 03-01)
+  //  LLM 流式/非流式调用、安全渲染管道、回退机制
+  //  依赖: GobyStorage, GobyPanel, DOMPurify, marked
+  // ================================================================
+
+  // ---- 内部状态 ----
+  var _agentState = {
+    messages: [],
+    isProcessing: false,
+    connectionStatus: 'gray',
+    activeOrigin: ''
+  };
+
+  // ---- SYSTEM_PROMPT (AGENT-04, D-07, ~80 行中文) ----
+  var SYSTEM_PROMPT = '你叫 Goby，是一个 AI 浏览器自动化助手。你可以使用工具来操作当前页面，用中文回答用户。\n' +
+    '工具使用原则：\n' +
+    '1. 先查后做 — 不确定页面结构时，先用 page_list_elements 或 page_query\n' +
+    '2. 顺序执行 — 工具依次调用，每次一个，基于前一个结果决定下一步\n' +
+    '3. 工具失败 — 尝试替代方案（不同选择器、不同方法），连续3次失败则跳过\n' +
+    '4. 及时停止 — 获取足够信息回答用户后，立即停止调用工具，直接给出答案\n' +
+    '每次调用工具前，简要说明你的计划。任务完成后用一两句总结你做了什么。如果无法完成，说清楚原因和建议。\n\n' +
+    '可用工具：\n' +
+    '- page_query: 使用 CSS 选择器查询页面元素的内容\n' +
+    '- page_list_elements: 列出页面上所有交互元素\n' +
+    '- page_wait: 等待元素出现或等待指定时间\n' +
+    '- page_evaluate: 在页面中执行 JavaScript\n' +
+    '- page_fill: 填写表单输入框\n' +
+    '- page_click: 点击页面元素\n' +
+    '- page_check: 勾选或取消复选框\n' +
+    '- page_select: 选择下拉选项\n' +
+    '- page_submit: 提交表单\n' +
+    '- page_analyze: 分析当前页面的内容和主题\n' +
+    '- page_screenshot: 截取当前页面的截图\n' +
+    '- calculator: 执行数学计算\n' +
+    '- clipboard_read: 读取剪贴板\n' +
+    '- clipboard_write: 写入剪贴板\n' +
+    '- get_current_time: 获取当前时间';
+
+  /**
+   * renderMarkdown — 安全渲染管道 (SEC-01, D-20/D-21/D-22)
+   * @param {string} content - 原始 LLM 输出
+   * @returns {string} 消毒后的安全 HTML
+   */
+  function renderMarkdown(content) {
+    if (!content) return '';
+    var html;
+    try {
+      html = window.marked.parse(content);
+    } catch (e) {
+      // marked 解析失败时回退到 textContent 已转义的 HTML
+      var textNode = document.createTextNode(content);
+      html = textNode.textContent;
+    }
+    // DOMPurify 白名单消毒 — ALLOWED_TAGS (D-22)
+    if (typeof window.DOMPurify !== 'undefined' && typeof window.DOMPurify.sanitize === 'function') {
+      return window.DOMPurify.sanitize(html, {
+        ALLOWED_TAGS: [
+          'p', 'br', 'strong', 'em', 'b', 'i', 'code', 'pre',
+          'ul', 'ol', 'li', 'h1', 'h2', 'h3', 'h4', 'h5', 'h6',
+          'a', 'blockquote', 'hr',
+          'table', 'thead', 'tbody', 'tr', 'th', 'td',
+          'img', 'del'
+        ],
+        ALLOWED_ATTR: ['href', 'target', 'rel', 'src', 'alt', 'class']
+      });
+    }
+    // 没有 DOMPurify 时，回退到 textContent
+    var fallbackNode = document.createTextNode(html);
+    return fallbackNode.textContent;
+  }
+
+  /**
+   * getFallbackContent — 推理字段回退机制 (AGENT-06, D-10)
+   * Qwen: reasoning, DeepSeek: reasoning_content
+   * @param {{content?: string, reasoning?: string, reasoning_content?: string}} delta
+   * @returns {string}
+   */
+  function getFallbackContent(delta) {
+    if (delta && delta.content) return delta.content;
+    if (delta && delta.reasoning) return delta.reasoning;
+    if (delta && delta.reasoning_content) return delta.reasoning_content;
+    return '';
+  }
+
+  /**
+   * callLLMStream — 流式 LLM 调用 (AGENT-02, D-01/D-02/D-04)
+   * 通过 Service Worker 转发 SSE 流，逐 chunk 回调
+   * @param {Array} messages - 对话消息数组
+   * @param {function} onChunk - 逐 chunk 回调(text, done)
+   */
+  function callLLMStream(messages, onChunk) {
+    // D-23: 直接从 storage 读取配置，不经过 postMessage
+    return GobyStorage.getConfig().then(function (cfg) {
+      _agentState.isProcessing = true;
+      _agentState.connectionStatus = 'green';
+      GobyPanel.updateConnectionStatus('green');
+
+      // 构造 tools 参数（Plan 03-02 实现完整工具定义）
+      var tools = [];
+
+      // 发送 llm-stream 到 Service Worker
+      return chrome.runtime.sendMessage({
+        action: 'llm-stream',
+        messages: messages,
+        tools: tools
+      });
+    });
+  }
+
+  /**
+   * callLLM — 非流式 LLM 调用 (AGENT-03, D-03)
+   * 用于对话压缩摘要、page_analyze 等后台任务
+   * @param {Array} messages - 对话消息数组
+   * @returns {Promise<Object>} 完整响应 JSON
+   */
+  function callLLM(messages) {
+    return GobyStorage.getConfig().then(function (cfg) {
+      return chrome.runtime.sendMessage({
+        action: 'llm-request',
+        messages: messages
+      });
+    }).then(function (response) {
+      return response;
+    });
+  }
+
+  /**
+   * sendMessage — 用户消息主入口
+   * @param {string} userText
+   */
+  function sendMessage(userText) {
+    if (_agentState.isProcessing) return;
+    if (!userText || !userText.trim()) return;
+
+    // 追加用户消息到面板
+    GobyPanel.appendMessage('user', userText);
+
+    // 更新状态
+    _agentState.messages.push({ role: 'user', content: userText });
+
+    // 构建完整消息数组（含 system prompt）
+    var messages = [
+      { role: 'system', content: SYSTEM_PROMPT }
+    ].concat(_agentState.messages);
+
+    // 发起流式调用 — onChunk 处理 stream-chunk 回调
+    callLLMStream(messages, function (text, done, error) {
+      // 留空 — stream-chunk 由 handleStreamChunk 处理
+      // onChunk 参数为后续 Plan 03-02 Agent 循环预留
+    });
+  }
+
+  /**
+   * handleStreamChunk — 接收 SW 转发的 stream-chunk 事件
+   * @param {{type: string, content?: string, done?: boolean, error?: object, tool_calls?: Array}} data
+   */
+  function handleStreamChunk(data) {
+    if (!data) return;
+
+    // 错误处理
+    if (data.type === 'error') {
+      _agentState.connectionStatus = 'red';
+      _agentState.isProcessing = false;
+      GobyPanel.updateConnectionStatus('red');
+      GobyPanel.updateStatusBar({ connectionStatus: 'red' });
+      GobyPanel.appendMessage('bot', '请求失败: ' + (data.error ? data.error.message : '未知错误'));
+      // 恢复输入框
+      if (GobyPanel._inputEl) {
+        GobyPanel._inputEl.disabled = false;
+      }
+      return;
+    }
+
+    // 流完成
+    if (data.done) {
+      _agentState.isProcessing = false;
+      _agentState.connectionStatus = 'green';
+
+      if (window.GobyPanel && typeof window.GobyPanel.appendStreamingChunk === 'function') {
+        window.GobyPanel.appendStreamingChunk(data.content || '', true);
+      }
+
+      // 更新消息历史
+      _agentState.messages.push({ role: 'assistant', content: data.content || '' });
+
+      // 恢复输入框
+      if (GobyPanel._inputEl) {
+        GobyPanel._inputEl.disabled = false;
+      }
+      return;
+    }
+
+    // 文字 chunk — stream 到气泡
+    if (data.type === 'text' && data.content) {
+      if (window.GobyPanel && typeof window.GobyPanel.appendStreamingChunk === 'function') {
+        window.GobyPanel.appendStreamingChunk(data.content, false);
+      }
+      return;
+    }
+
+    // 工具调用 chunk（Plan 03-02 实现累加器）
+    if (data.type === 'tool_calls') {
+      // 留空 — Plan 03-02
+      return;
+    }
+  }
+
+  // 暴露 GobyAgent 到全局
+  window.GobyAgent = {
+    sendMessage: sendMessage,
+    callLLMStream: callLLMStream,
+    callLLM: callLLM,
+    renderMarkdown: renderMarkdown,
+    getFallbackContent: getFallbackContent,
+    handleStreamChunk: handleStreamChunk,
+    SYSTEM_PROMPT: SYSTEM_PROMPT,
+    getState: function () {
+      return {
+        messages: _agentState.messages.slice(),
+        isProcessing: _agentState.isProcessing,
+        connectionStatus: _agentState.connectionStatus,
+        activeOrigin: _agentState.activeOrigin
+      };
+    }
+  };
 
 })();
