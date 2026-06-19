@@ -488,10 +488,14 @@
     ball.style.display = 'flex';
     ball.style.alignItems = 'center';
     ball.style.justifyContent = 'center';
-    ball.style.fontSize = '18px';
-    ball.style.fontWeight = '700';
-    ball.style.color = '#ffffff';
-    ball.textContent = 'G';
+    ball.innerHTML =
+      '<svg viewBox="0 0 128 128" width="28" height="28" fill="none" ' +
+      'stroke="#ffffff" stroke-width="5" stroke-linecap="round" stroke-linejoin="round">' +
+      '<path d="M 20 64 C 40 42, 70 40, 86 56 Q 94 64, 86 72 C 70 88, 40 86, 20 64 Z"/>' +
+      '<path d="M 20 64 L 6 50 L 10 64 L 6 78 Z"/>' +
+      '<path d="M 42 46 Q 52 32, 64 44"/>' +
+      '<circle cx="76" cy="60" r="4" fill="#ffffff" stroke="none"/>' +
+      '</svg>';
 
     // 点击切换面板
     ball.addEventListener('click', function (e) {
