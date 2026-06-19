@@ -215,6 +215,7 @@
 
   // ---- 保存配置（保存当前 Profile 的编辑） ----
   saveBtn.addEventListener('click', function () {
+    console.log('[Goby popup] saveBtn clicked');
     var selectedName = profileSelect.value;
     if (!selectedName || !currentProfiles[selectedName]) return;
 
@@ -254,7 +255,9 @@
   // ---- 编辑当前 Profile（Phase 01 测试 5：btnEditProfile 之前无 click handler） ----
   // 设计：当前 profile 的字段已显示在表单中，编辑按钮的作用是聚焦到表单顶部让用户开始修改
   btnEditProfile.addEventListener('click', function () {
+    console.log('[Goby popup] btnEditProfile clicked, disabled=', btnEditProfile.disabled);
     var selectedName = profileSelect.value;
+    console.log('[Goby popup] edit: selectedName=', selectedName, 'profile=', currentProfiles[selectedName]);
     if (!selectedName || !currentProfiles[selectedName]) return;
     loadProfileForm(selectedName);
     baseUrlInput.focus();
