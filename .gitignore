@@ -11,3 +11,6 @@ test_副本.html
 
 # GSD planning artifacts (kept local — project decisions/workflow not for upstream)
 .planning/
+
+# Local Claude Code project instructions (per-developer, not for upstream)
+CLAUDE.md
