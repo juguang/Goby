@@ -42,6 +42,31 @@
   }
 
   /**
+   * 校验 API Base URL 必须是合法的 http(s):// URL
+   * @param {string} str
+   * @returns {boolean}
+   */
+  function isValidHttpUrl(str) {
+    if (!str) return false;
+    if (!/^https?:\/\//i.test(str)) return false;
+    try {
+      var u = new URL(str);
+      return u.protocol === 'http:' || u.protocol === 'https:';
+    } catch (e) {
+      return false;
+    }
+  }
+
+  /**
+   * 校验 API Key 必须是纯 ASCII（防止 fetch headers 抛 ISO-8859-1 异常）
+   * @param {string} str
+   * @returns {boolean}
+   */
+  function isPureAscii(str) {
+    return /^[\x00-\x7F]*$/.test(str);
+  }
+
+  /**
    * 渲染 Profile 下拉选择器
    */
   function renderProfileSelector() {
@@ -199,6 +224,20 @@
       model: modelInput.value.trim()
     };
 
+    // Phase 01 测试 7：URL 必须是 http(s):// 协议
+    if (!isValidHttpUrl(config.baseUrl)) {
+      showToast('API Base URL 必须以 http:// 或 https:// 开头且为合法 URL', 'error', 3000);
+      baseUrlInput.focus();
+      return;
+    }
+
+    // Phase 03 测试 11-4 follow_up：API Key 必须纯 ASCII（防御）
+    if (!isPureAscii(config.apiKey)) {
+      showToast('API Key 包含非法字符（仅允许英文/数字/符号，不可含中文或全角字符）', 'error', 3000);
+      apiKeyInput.focus();
+      return;
+    }
+
     GobyStorage.saveProfile(selectedName, config).then(function () {
       // 更新本地缓存
       currentProfiles[selectedName] = {
@@ -210,6 +249,17 @@
     }).catch(function (err) {
       showToast('保存失败: ' + (err.message || '未知错误'), 'error', 2000);
     });
+  });
+
+  // ---- 编辑当前 Profile（Phase 01 测试 5：btnEditProfile 之前无 click handler） ----
+  // 设计：当前 profile 的字段已显示在表单中，编辑按钮的作用是聚焦到表单顶部让用户开始修改
+  btnEditProfile.addEventListener('click', function () {
+    var selectedName = profileSelect.value;
+    if (!selectedName || !currentProfiles[selectedName]) return;
+    loadProfileForm(selectedName);
+    baseUrlInput.focus();
+    baseUrlInput.select();
+    showToast('编辑「' + selectedName + '」', 'success', 1500);
   });
 
   // ---- 删除 Profile ----
