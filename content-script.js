@@ -2301,15 +2301,18 @@
       _agentState.connectionStatus = 'red';
       GobyPanel.updateConnectionStatus('red');
       GobyPanel.updateStatusBar({ connectionStatus: 'red' });
-      GobyPanel.appendMessage('bot', '请求失败: ' + (data.error ? data.error.message : '未知错误'));
 
-      // Agent 循环模式：reject stream promise
+      var errMsg = data.error ? data.error.message : '未知错误';
+
+      // Agent 循环模式：只 reject，由 processAgentMessage 的 catch 块统一 appendMessage
+      // （否则会双重显示 — Phase 03 UAT 测试 11 子问题 3）
       if (_streamReject) {
-        _streamReject(new Error(data.error ? data.error.message : '未知错误'));
+        _streamReject(new Error(errMsg));
         _streamReject = null;
         _streamResolve = null;
       } else {
-        // 简单流模式：清理状态
+        // 简单流模式：没有上层 catch，这里负责显示
+        GobyPanel.appendMessage('bot', '请求失败: ' + errMsg);
         _agentState.isProcessing = false;
         if (GobyPanel._inputEl) GobyPanel._inputEl.disabled = false;
       }

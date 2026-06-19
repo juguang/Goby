@@ -14,6 +14,78 @@
   'use strict';
 
   // ============================================================
+  //  HTTP 错误格式化（Phase 03 UAT 测试 11 子问题 1/2）
+  //  - 尝试解析 JSON 提取 LLM 服务商的 .error.message 字段
+  //  - 按 status 映射友好文案
+  //  - 脱敏：移除错误消息里被回显的 API Key 片段
+  // ============================================================
+
+  /**
+   * 按 HTTP 状态码返回中文友好提示
+   * @param {number} status
+   * @returns {string}
+   */
+  function httpStatusHint(status) {
+    if (status === 401) return 'API Key 无效或已过期，请在设置中检查';
+    if (status === 403) return 'API 拒绝访问（可能权限不足或被风控）';
+    if (status === 404) return 'API 地址不存在，请检查 Base URL 是否正确';
+    if (status === 429) return '请求过于频繁或额度耗尽，请稍后再试';
+    if (status >= 500) return 'LLM 服务端异常（' + status + '），请稍后再试';
+    return 'HTTP ' + status;
+  }
+
+  /**
+   * 从 LLM 服务商的 errorBody 中提取可读消息
+   * 支持的格式：{"error":{"message":"..."}} 或 OpenAI 风格 {"error":{"message":"...","type":"..."}}
+   * @param {string} errorBody
+   * @returns {string|null}
+   */
+  function extractApiMessage(errorBody) {
+    if (!errorBody) return null;
+    try {
+      var parsed = JSON.parse(errorBody);
+      if (parsed && parsed.error && typeof parsed.error.message === 'string') {
+        return parsed.error.message;
+      }
+      if (typeof parsed.message === 'string') {
+        return parsed.message;
+      }
+    } catch (e) {
+      // 非 JSON — 返回原文（截断）
+      return errorBody.length > 200 ? errorBody.substring(0, 200) + '...' : errorBody;
+    }
+    return null;
+  }
+
+  /**
+   * 脱敏：移除错误消息里被服务端回显的 API Key 片段
+   * 匹配形如 "api key: sk-xxx" / "key: sk-xxx" / "api_key: sk-xxx" 的子串
+   * @param {string} msg
+   * @returns {string}
+   */
+  function redactApiKey(msg) {
+    if (typeof msg !== 'string') return msg;
+    return msg
+      .replace(/(api[_\s-]?key\s*[:：]\s*)([^\s,}"']+)/gi, '$1***')
+      .replace(/(bearer\s+)([a-z0-9_\-]{8,})/gi, '$1***');
+  }
+
+  /**
+   * 格式化 HTTP 错误为用户可读消息
+   * @param {number} status
+   * @param {string} errorBody
+   * @returns {string}
+   */
+  function formatHttpError(status, errorBody) {
+    var hint = httpStatusHint(status);
+    var apiMsg = extractApiMessage(errorBody);
+    if (apiMsg) {
+      return hint + ' — ' + redactApiKey(apiMsg);
+    }
+    return hint;
+  }
+
+  // ============================================================
   //  配置读取
   // ============================================================
 
@@ -218,7 +290,7 @@
         if (!response.ok) {
           // 尝试读取错误 body
           return response.text().then(function (errorBody) {
-            sendError(tabId, 'HTTP ' + response.status + ': ' + (errorBody || response.statusText));
+            sendError(tabId, formatHttpError(response.status, errorBody || response.statusText));
             return null;
           });
         }
@@ -346,7 +418,7 @@
       }).then(function (response) {
         if (!response.ok) {
           return response.text().then(function (errorBody) {
-            sendResponse({ error: { message: 'HTTP ' + response.status + ': ' + (errorBody || response.statusText) } });
+            sendResponse({ error: { message: formatHttpError(response.status, errorBody || response.statusText) } });
           });
         }
         return response.json().then(function (data) {
