@@ -264,7 +264,7 @@
   }
 
   /**
-   * 保存当前模态框表单到 Profile（由保存按钮和编辑按钮触发）
+   * 保存当前模态框表单到 Profile（由保存按钮触发）
    */
   function saveModalProfile() {
     if (!validateModalForm()) {
@@ -275,17 +275,47 @@
     if (!select || !select.value) return;
 
     var name = select.value;
-    var config = {
-      baseUrl: document.getElementById('modal-baseUrl').value.trim(),
-      apiKey: document.getElementById('modal-apiKey').value,
-      model: document.getElementById('modal-model').value.trim()
-    };
+    var config = GobyFormHelpers.buildProfileConfigFromForm(
+      document.getElementById('modal-baseUrl').value,
+      document.getElementById('modal-apiKey').value,
+      document.getElementById('modal-model').value
+    );
+
+    var v = GobyFormHelpers.validateProfileConfig(config);
+    if (!v.ok) {
+      showModalFeedback(v.message, 'error', 3000);
+      if (v.field === 'baseUrl') {
+        var bEl = document.getElementById('modal-baseUrl');
+        if (bEl) bEl.focus();
+      } else if (v.field === 'apiKey') {
+        var kEl = document.getElementById('modal-apiKey');
+        if (kEl) kEl.focus();
+      }
+      return;
+    }
 
     GobyStorage.saveProfile(name, config).then(function () {
       showModalFeedback('已保存', 'success');
     }).catch(function (err) {
       showModalFeedback('保存失败: ' + (err.message || '未知错误'), 'error');
     });
+  }
+
+  /**
+   * 编辑当前选中的 Profile（对标 popup.js btnEditProfile 行为）
+   * 重新加载表单 + 聚焦 + 全选 Base URL + 显示编辑模式提示
+   */
+  function editModalProfile() {
+    var select = document.getElementById('modal-profile-select');
+    if (!select || !select.value) return;
+    var name = select.value;
+    loadModalProfileForm(name);
+    var baseUrlInput = document.getElementById('modal-baseUrl');
+    if (baseUrlInput) {
+      baseUrlInput.focus();
+      baseUrlInput.select();
+    }
+    showModalFeedback('编辑「' + name + '」', 'success', 1500);
   }
 
   /**
@@ -504,8 +534,8 @@
     // Add profile
     addBtn.addEventListener('click', addModalProfile);
 
-    // Edit/save profile (same as save button)
-    editBtn.addEventListener('click', saveModalProfile);
+    // Edit current profile (载入表单 + 聚焦，对标 popup.js btnEditProfile)
+    editBtn.addEventListener('click', editModalProfile);
 
     // Delete profile
     deleteBtn.addEventListener('click', deleteModalProfile);

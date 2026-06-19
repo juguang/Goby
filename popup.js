@@ -42,31 +42,6 @@
   }
 
   /**
-   * 校验 API Base URL 必须是合法的 http(s):// URL
-   * @param {string} str
-   * @returns {boolean}
-   */
-  function isValidHttpUrl(str) {
-    if (!str) return false;
-    if (!/^https?:\/\//i.test(str)) return false;
-    try {
-      var u = new URL(str);
-      return u.protocol === 'http:' || u.protocol === 'https:';
-    } catch (e) {
-      return false;
-    }
-  }
-
-  /**
-   * 校验 API Key 必须是纯 ASCII（防止 fetch headers 抛 ISO-8859-1 异常）
-   * @param {string} str
-   * @returns {boolean}
-   */
-  function isPureAscii(str) {
-    return /^[\x00-\x7F]*$/.test(str);
-  }
-
-  /**
    * 渲染 Profile 下拉选择器
    */
   function renderProfileSelector() {
@@ -218,23 +193,17 @@
     var selectedName = profileSelect.value;
     if (!selectedName || !currentProfiles[selectedName]) return;
 
-    var config = {
-      baseUrl: baseUrlInput.value.trim(),
-      apiKey: apiKeyInput.value,
-      model: modelInput.value.trim()
-    };
+    var config = GobyFormHelpers.buildProfileConfigFromForm(
+      baseUrlInput.value,
+      apiKeyInput.value,
+      modelInput.value
+    );
 
-    // Phase 01 测试 7：URL 必须是 http(s):// 协议
-    if (!isValidHttpUrl(config.baseUrl)) {
-      showToast('API Base URL 必须以 http:// 或 https:// 开头且为合法 URL', 'error', 3000);
-      baseUrlInput.focus();
-      return;
-    }
-
-    // Phase 03 测试 11-4 follow_up：API Key 必须纯 ASCII（防御）
-    if (!isPureAscii(config.apiKey)) {
-      showToast('API Key 包含非法字符（仅允许英文/数字/符号，不可含中文或全角字符）', 'error', 3000);
-      apiKeyInput.focus();
+    var v = GobyFormHelpers.validateProfileConfig(config);
+    if (!v.ok) {
+      showToast(v.message, 'error', 3000);
+      if (v.field === 'baseUrl') baseUrlInput.focus();
+      else if (v.field === 'apiKey') apiKeyInput.focus();
       return;
     }
 
