@@ -8,3 +8,6 @@ test_副本.html
 
 # Playwright MCP session logs
 .playwright-mcp/
+
+# GSD planning artifacts (kept local — project decisions/workflow not for upstream)
+.planning/
