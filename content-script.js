@@ -1239,6 +1239,19 @@
         expr = expr.trim();
         if (!expr) return 'Error: 表达式为空';
 
+        // Phase 03 UAT 测试 3 修复：规范化中文/全角运算符为 ASCII
+        // LLM 经常原样保留用户输入的 "23 × 17" 中文字符（× U+00D7），导致正则校验失败
+        expr = expr
+          .replace(/×/g, '*')        // U+00D7 multiplication sign
+          .replace(/÷/g, '/')        // U+00F7 division sign
+          .replace(/−/g, '-')        // U+2212 minus sign
+          .replace(/–/g, '-')        // U+2013 en dash
+          .replace(/—/g, '-')        // U+2014 em dash
+          .replace(/，/g, ',')       // 全角逗号
+          .replace(/（/g, '(')       // 全角左括号
+          .replace(/）/g, ')')       // 全角右括号
+          .replace(/．/g, '.');      // 全角句点
+
         // 正则验证：只允许数字、运算符、括号、小数点、空白、Math 函数
         // 拒绝任何字母（除 Math.xxx 函数调用）
         var sanitized = expr.replace(/\s/g, '');
