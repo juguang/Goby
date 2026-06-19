@@ -29,7 +29,7 @@
     {
       "matches": ["<all_urls>"],
       "js": ["lib/purify.min.js", "lib/marked.min.js", "storage.js", "lib/form-helpers.js", "panel.js", "content-script.js"],
-      "css": ["agent-panel.css"],
+      "css": ["lib/toggle.css", "agent-panel.css"],
       "run_at": "document_idle"
     }
   ],

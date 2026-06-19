@@ -222,25 +222,6 @@
   color: #ef4444;
 }
 
-/* ---- Auto-start checkbox ---- */
-
-.goby-auto-checkbox {
-  display: flex;
-  align-items: center;
-  gap: 8px;
-  margin-top: 16px;
-  font-size: 13px;
-  color: #111827;
-  cursor: pointer;
-}
-
-.goby-auto-checkbox input[type="checkbox"] {
-  width: 16px;
-  height: 16px;
-  cursor: pointer;
-  accent-color: #667eea;
-}
-
 /* ---- HTTPS Warning ---- */
 
 .goby-https-warning {

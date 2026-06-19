@@ -481,18 +481,24 @@
     body.appendChild(createFormGroupWithEye('API Key', 'modal-apiKey', ''));
     body.appendChild(createFormGroup('Model Name', 'modal-model', 'text', '例如: Qwen3.6-35B-A3B'));
 
-    // Auto-start checkbox
-    var autoCheckLabel = document.createElement('label');
-    autoCheckLabel.className = 'goby-auto-checkbox';
-
+    // Auto-start toggle (与 popup 共享 lib/toggle.css 样式)
+    var autoCheckRow = document.createElement('div');
+    autoCheckRow.className = 'panel-toggle-row';
+    var autoCheckLabel = document.createElement('span');
+    autoCheckLabel.className = 'panel-toggle-label';
+    autoCheckLabel.textContent = '启动时自动展开面板';
+    var autoCheckSwitch = document.createElement('label');
+    autoCheckSwitch.className = 'toggle-switch';
     var autoCheckInput = document.createElement('input');
     autoCheckInput.type = 'checkbox';
     autoCheckInput.id = 'modal-autoStart';
-
-    var autoCheckText = document.createTextNode(' 启动时自动展开面板');
-    autoCheckLabel.appendChild(autoCheckInput);
-    autoCheckLabel.appendChild(autoCheckText);
-    body.appendChild(autoCheckLabel);
+    var autoCheckSlider = document.createElement('span');
+    autoCheckSlider.className = 'toggle-slider';
+    autoCheckSwitch.appendChild(autoCheckInput);
+    autoCheckSwitch.appendChild(autoCheckSlider);
+    autoCheckRow.appendChild(autoCheckLabel);
+    autoCheckRow.appendChild(autoCheckSwitch);
+    body.appendChild(autoCheckRow);
 
     // HTTPS warning
     var httpsWarning = document.createElement('div');
