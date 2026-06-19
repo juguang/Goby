@@ -270,40 +270,22 @@
     }
   });
 
-  // ---- 面板开关（POPUP-03） ----
+  // ---- 启动时自动展开面板开关（与 modal 端 gobyPanelState.autoStart 同步） ----
   var panelToggle = document.getElementById('panelToggle');
   if (panelToggle) {
-    // 初始化时检查当前页面面板状态
-    chrome.tabs.query({ active: true, currentWindow: true }, function (tabs) {
-      if (!tabs || tabs.length === 0) return;
-      try {
-        chrome.tabs.sendMessage(tabs[0].id, { action: 'get-panel-state' }, function (response) {
-          if (chrome.runtime.lastError) {
-            // 内容脚本尚未注入（如新页面或 chrome:// 页面）
-            panelToggle.checked = false;
-            return;
-          }
-          if (response && typeof response.isVisible === 'boolean') {
-            panelToggle.checked = response.isVisible;
-          }
-        });
-      } catch (e) {
-        panelToggle.checked = false;
-      }
+    // 初始化：从 storage 读取 autoStart
+    chrome.storage.local.get(['gobyPanelState'], function (result) {
+      var panelState = result.gobyPanelState || {};
+      panelToggle.checked = panelState.autoStart === true;
     });
 
+    // 切换时写入 storage（与 content-script.js:553-559 modal-autoStart 的写法对齐）
     panelToggle.addEventListener('change', function () {
-      chrome.tabs.query({ active: true, currentWindow: true }, function (tabs) {
-        if (!tabs || tabs.length === 0) return;
-        chrome.tabs.sendMessage(tabs[0].id, {
-          action: 'toggle-panel',
-          visible: panelToggle.checked
-        }, function () {
-          if (chrome.runtime.lastError) {
-            showToast('请刷新页面后重试', 'error', 2000);
-            // 回滚开关状态
-            panelToggle.checked = !panelToggle.checked;
-          }
+      chrome.storage.local.get(['gobyPanelState'], function (result) {
+        var panelState = result.gobyPanelState || {};
+        panelState.autoStart = panelToggle.checked;
+        chrome.storage.local.set({ gobyPanelState: panelState }, function () {
+          showToast(panelToggle.checked ? '已启用自动展开' : '已关闭自动展开', 'success', 1500);
         });
       });
     });
