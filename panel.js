@@ -1730,6 +1730,11 @@
     _inputEl: null,
 
     /**
+     * 发送按钮引用（Phase 03 UAT 测试 12：恢复 disabled 状态用）
+     */
+    _sendBtn: null,
+
+    /**
      * 更新状态栏
      * @param {{modelName?: string, connectionStatus?: string, roundCount?: number}} opts
      */
@@ -1805,6 +1810,7 @@
       window.GobyPanel._panelContainer = _host;
       window.GobyPanel._chatArea = _chatArea;
       window.GobyPanel._inputEl = _inputEl;
+      window.GobyPanel._sendBtn = _sendBtn;
       window.GobyPanel._messagesContainer = _messagesContainer;
     }
   };

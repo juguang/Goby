@@ -42,7 +42,11 @@
   });
 
   // ---- Init — 面板默认隐藏，autoStart 控制自动展开 ----
+  // Phase 03 UAT 测试 5：先 await GobyPanel.init()，再 initSession()，避免渲染时序竞争
+  // （否则 loadSession 完成时面板未就绪，renderWelcome + appendMessage(历史) 被静默跳过）
   GobyPanel.init().then(function () {
+    // 面板就绪后再初始化会话（loadSession 才能正确渲染历史消息）
+    initSession();
     return chrome.storage.local.get(['gobyPanelState']).then(function (result) {
       var panelState = result.gobyPanelState || {};
       if (panelState.autoStart) {
@@ -50,7 +54,8 @@
       }
     });
   }).catch(function () {
-    // 初始化失败 — 不影响 content-script 其他功能
+    // 初始化失败 — 退化到立即初始化会话（无面板渲染）
+    initSession();
   });
 
   // ==================================================================
@@ -556,7 +561,8 @@
     connectionStatus: 'gray',
     activeOrigin: '',
     sessionId: '',           // 当前会话 ID (Plan 03-03)
-    toolCallCounter: 0      // 会话工具调用计数（AGENT-05 限制保护）
+    toolCallCounter: 0,     // 会话工具调用计数（AGENT-05 限制保护）
+    roundCount: 0           // 会话累计对话轮数（Phase 03 UAT 测试 4：跨消息累计，不在 processAgentMessage 末尾重置）
   };
 
   // ---- Agent 循环内部状态 ----
@@ -1645,9 +1651,13 @@
     _agentState.sessionId = sessionId;
     _agentState.activeOrigin = origin;
 
-    // 重置 UI
-    if (window.GobyPanel && typeof window.GobyPanel.renderWelcome === 'function') {
-      window.GobyPanel.renderWelcome();
+    // 重置 UI：先清空旧的聊天气泡（含遗留工具调用），再显示欢迎消息
+    if (window.GobyPanel) {
+      if (typeof window.GobyPanel.clearChat === 'function') {
+        window.GobyPanel.clearChat();
+      } else if (typeof window.GobyPanel.renderWelcome === 'function') {
+        window.GobyPanel.renderWelcome();
+      }
     }
 
     return sessionId;
@@ -2140,13 +2150,14 @@
     // 追加用户消息到消息历史（面板已由 panel.js 渲染）
     _agentState.messages.push({ role: 'user', content: userText });
 
+    // Phase 03 UAT 测试 4：会话累计轮数（不在末尾重置）
+    _agentState.roundCount++;
+    GobyPanel.updateRoundCount(_agentState.roundCount);
+
     var loopCount = 0;
     var loopExitedByLimit = false;
 
     while (loopCount < MAX_LOOPS) {
-      // 更新状态栏轮数
-      GobyPanel.updateRoundCount(loopCount + 1);
-
       // 消息数量限制
       enforceMessageLimit();
 
@@ -2270,7 +2281,8 @@
     _agentState.isProcessing = false;
     _agentState.connectionStatus = 'gray';
     GobyPanel.updateConnectionStatus('gray');
-    GobyPanel.updateRoundCount(0);
+    // Phase 03 UAT 测试 4：保留会话累计轮数（_agentState.roundCount），不再重置为 0
+    GobyPanel.updateRoundCount(_agentState.roundCount);
 
     // 恢复输入框
     if (GobyPanel._inputEl) GobyPanel._inputEl.disabled = false;
@@ -2419,7 +2431,8 @@
   };
 
   // ---- Plan 03-03: 会话初始化 + URL 变化监听 ----
-  // 先同步创建新会话（确保消息历史初始化），再异步加载已保存会话
+  // Phase 03 UAT 测试 5：initSession 由 GobyPanel.init().then() 触发（不再立即调用）
+  // 这样 loadSession 完成时面板已就绪，能正确渲染历史消息
   function initSession() {
     var origin = window.location.origin;
     // 同步创建会话（Plan 要求：createSession 初始化首个会话）
@@ -2431,9 +2444,6 @@
       }
     });
   }
-
-  // 立即初始化会话（面板未就绪时渲染静默跳过）
-  initSession();
 
   // URL 变化监听 (SESS-01, D-16)
   window.addEventListener('popstate', handleUrlChange);
