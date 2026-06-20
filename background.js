@@ -735,6 +735,10 @@
                 workflowId: workflowId,
                 chatTabId: chatTabId,
                 workerTabId: tab.id,
+                // Phase 8 / NAV-09 / D-16: 记录 worker Tab 所在 windowId，供
+                // chrome.windows.onRemoved 兜底清理（Pitfall 3：窗口关闭时
+                // tabs.onRemoved 可能不触发，必须有 windows.onRemoved 兜底）
+                workerWindowId: (typeof tab.windowId === 'number') ? tab.windowId : null,
                 chatOrigin: chatOrigin,
                 workerOrigin: message.url,
                 startedAt: Date.now(),
@@ -909,6 +913,80 @@
     }
 
     return false;
+  });
+
+  // ============================================================
+  //  Phase 8 / NAV-09 / D-16: chrome.tabs.onRemoved + chrome.windows.onRemoved
+  //
+  //  错误恢复路径：工作 Tab 意外关闭时（用户手动关 / 窗口关闭 / 浏览器崩），
+  //  SW 必须向 chat Tab 发 workflow_error 通知，避免 chat Tab 永久卡
+  //  isProcessing=true。无显式超时（D-17），用户兜底是手动关闭工作 Tab。
+  //
+  //  Pitfall 3 兜底：窗口关闭时 tabs.onRemoved 可能不触发（Chrome 行为不稳
+  //  定），必须有 windows.onRemoved 监听兜底。两者协同：
+  //    - tabs.onRemoved + isWindowClosing:false → 立即 delete + storage 清
+  //    - tabs.onRemoved + isWindowClosing:true  → 标 status='error' 但保留
+  //      （让 windows.onRemoved 兜底清理，避免双重通知+竞态）
+  //    - windows.onRemoved → 找 workerWindowId 匹配的 workflow 兜底清理
+  //
+  //  必须在 SW top-level 注册（MV3 SW restart 后同步执行），保证 listener
+  //  在新 SW 实例上立即恢复（应对 RESEARCH.md Pitfall 1）。
+  // ============================================================
+
+  // chrome.tabs.onRemoved：工作 Tab 被关闭时通知 chat Tab
+  // - 遍历 _activeWorkflows 找 workerTabId === removedTabId && status='active'
+  // - reason 文案：'工作 Tab 被关闭' + （isWindowClosing 时追加 '（窗口关闭）'）
+  // - isWindowClosing === false：立即 delete + storage 清
+  // - isWindowClosing === true：标 status='error'（避免重复通知），让 windows.onRemoved 兜底
+  chrome.tabs.onRemoved.addListener(function (removedTabId, removeInfo) {
+    Object.keys(_activeWorkflows).forEach(function (wfId) {
+      var wf = _activeWorkflows[wfId];
+      if (!wf || wf.workerTabId !== removedTabId || wf.status !== 'active') {
+        return;
+      }
+      var reason = '工作 Tab 被关闭' +
+        (removeInfo && removeInfo.isWindowClosing ? '（窗口关闭）' : '');
+      sendToTabWithRetry(wf.chatTabId, {
+        action: 'workflow_error',
+        workflow_id: wfId,
+        data: { reason: reason }
+      }, 3);
+      if (!removeInfo || !removeInfo.isWindowClosing) {
+        // 非窗口关闭 — 立即清理
+        updateActiveWorkflows(function (workflows) {
+          delete workflows[wfId];
+        });
+      } else {
+        // 窗口关闭 — 标 status='error' 但保留，让 windows.onRemoved 兜底清理
+        // （T-08-16: 防止 windows.onRemoved 误清理仍 active 的 workflow；
+        //  status='error' 后 windows.onRemoved 二次清理是幂等的，无副作用）
+        updateActiveWorkflows(function (workflows) {
+          if (workflows[wfId]) workflows[wfId].status = 'error';
+        });
+      }
+    });
+  });
+
+  // chrome.windows.onRemoved：窗口关闭兜底（Pitfall 3 — 窗口关闭时
+  // tabs.onRemoved 可能不触发）
+  // - 遍历 _activeWorkflows 找 workerWindowId === windowId && status !== 'completed'
+  // - 发 workflow_error 给 chatTabId（reason '工作 Tab 被关闭（窗口关闭）'）
+  // - 同步 delete + storage 清（包含 status='error' 的 entry — 幂等清理）
+  chrome.windows.onRemoved.addListener(function (windowId) {
+    Object.keys(_activeWorkflows).forEach(function (wfId) {
+      var wf = _activeWorkflows[wfId];
+      if (!wf || wf.workerWindowId !== windowId || wf.status === 'completed') {
+        return;
+      }
+      sendToTabWithRetry(wf.chatTabId, {
+        action: 'workflow_error',
+        workflow_id: wfId,
+        data: { reason: '工作 Tab 被关闭（窗口关闭）' }
+      }, 3);
+      updateActiveWorkflows(function (workflows) {
+        delete workflows[wfId];
+      });
+    });
   });
 
 })();
