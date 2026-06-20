@@ -651,6 +651,34 @@
     return attrs;
   }
 
+  /**
+   * setNativeValue — 通过原型链上的原生 value setter 给 input/textarea 赋值
+   * 用于绕过 React/Vue/Svelte 等 SPA 框架的受控组件 value descriptor 拦截。
+   * 框架通过 Object.defineProperty 重写 element.value，直接赋值 el.value = x
+   * 会让数据层与视图层不同步。本函数从 HTMLInputElement.prototype / HTMLTextAreaElement.prototype
+   * 取出原生 setter，以 .call() 方式直接作用于内部 slot，框架无法感知。
+   *
+   * 仅负责赋值，不派发任何事件（事件由调用方按需 dispatch input/change）。
+   * 对 select / 其他元素直接赋 el.value；contenteditable 元素应在外面单独处理。
+   *
+   * @param {Element} el
+   * @param {string} value
+   */
+  function setNativeValue(el, value) {
+    if (el instanceof HTMLInputElement) {
+      var inputSetter = Object.getOwnPropertyDescriptor(HTMLInputElement.prototype, 'value').set;
+      inputSetter.call(el, value);
+    } else if (el instanceof HTMLTextAreaElement) {
+      var taSetter = Object.getOwnPropertyDescriptor(HTMLTextAreaElement.prototype, 'value').set;
+      taSetter.call(el, value);
+    } else if (el instanceof HTMLSelectElement) {
+      el.value = value;
+    } else {
+      // 兜底：直接赋值。contenteditable 调用方应在外面用 textContent。
+      el.value = value;
+    }
+  }
+
   // ---- 15 个工具定义 (GOBY_DESIGN.md §四) ----
   // Phase 3 实现 4 个简单工具，其余返回占位消息
   var nativeTools = [
@@ -942,7 +970,7 @@
               if (fel.isContentEditable || fel.getAttribute('contenteditable') === 'true') {
                 fel.textContent = value;
               } else {
-                fel.value = value;
+                setNativeValue(fel, value);
               }
               fel.dispatchEvent(new Event('input', { bubbles: true }));
               fel.dispatchEvent(new Event('change', { bubbles: true }));
@@ -958,7 +986,7 @@
           if (el.isContentEditable || el.getAttribute('contenteditable') === 'true') {
             el.textContent = value;
           } else {
-            el.value = value;
+            setNativeValue(el, value);
           }
 
           el.dispatchEvent(new Event('input', { bubbles: true }));
@@ -1170,8 +1198,37 @@
             return 'Element is not a form: ' + selector;
           }
 
-          el.submit();
-          return 'Submitted form: ' + selector;
+          // 内联辅助：模拟完整点击事件链（mousedown → mouseup → click）
+          function simulateClick(target) {
+            ['mousedown', 'mouseup', 'click'].forEach(function (type) {
+              target.dispatchEvent(new MouseEvent(type, { bubbles: true, cancelable: true, view: window }));
+            });
+          }
+
+          // 三级回退策略，让 onsubmit handler / SPA 客户端路由优先接管
+          // 方案 A：找 form 内 submit 按钮，模拟点击（最贴近真实用户行为）
+          var submitBtn = el.querySelector('input[type=submit], button[type=submit]');
+          if (submitBtn) {
+            simulateClick(submitBtn);
+            return 'Submitted form via submit button click: ' + selector;
+          }
+
+          // 方案 B：派发 submit 事件，给 onsubmit handler 一次拦截机会
+          var submitEvent = new SubmitEvent('submit', { bubbles: true, cancelable: true });
+          el.dispatchEvent(submitEvent);
+
+          // 若 onsubmit 没 preventDefault，回退到原生 submit()
+          if (!submitEvent.defaultPrevented) {
+            try {
+              el.submit();
+              return 'Submitted form via native submit() (no onsubmit handler): ' + selector;
+            } catch (nativeErr) {
+              return 'Submit failed during native fallback: ' + nativeErr.message;
+            }
+          }
+
+          // onsubmit 已 preventDefault，认为 SPA handler 已接管提交
+          return 'Submitted form via submit event dispatch: ' + selector;
         } catch (e) {
           return 'Submit failed: ' + e.message;
         }
