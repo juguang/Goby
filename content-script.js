@@ -1533,6 +1533,41 @@
         break;
       }
     }
+
+    // 260620-i08 Fix B: 全数组扫描移除孤立 tool（双保险）
+    // enforceMessageLimit 在边界情况下可能漏过孤立 tool（如 tool_call_id 缺失、
+    // tool 配对的 assistant.tool_calls 在 enforceMessageLimit 之外的路径被丢弃）。
+    // 在 callLLM/callLLMStream 入口处做最终一致性检查兜底。
+    //
+    // 关键约束：循环变量必须用 si/sm/sTi/sTcs（第一遍）和 di/dm（第二遍），
+    // 不能复用外层 i/m/ti（外层第 1489/1490/1507 行已用），否则污染现有循环状态。
+    var knownToolCallIds = {};
+    for (var si = 0; si < clean.length; si++) {
+      var sm = clean[si];
+      if (sm.role === 'assistant' && sm.tool_calls) {
+        var sTcs = Array.isArray(sm.tool_calls) ? sm.tool_calls : [];
+        for (var sTi = 0; sTi < sTcs.length; sTi++) {
+          if (sTcs[sTi].id) {
+            knownToolCallIds[sTcs[sTi].id] = true;
+          }
+        }
+      }
+    }
+    var deduped = [];
+    for (var di = 0; di < clean.length; di++) {
+      var dm = clean[di];
+      if (dm.role === 'tool' && dm.tool_call_id && !knownToolCallIds[dm.tool_call_id]) {
+        // 孤立 tool：配对的 assistant.tool_calls 不存在 → 跳过
+        continue;
+      }
+      if (dm.role === 'tool' && !dm.tool_call_id) {
+        // 损坏数据：tool 没有 tool_call_id → 跳过
+        continue;
+      }
+      deduped.push(dm);
+    }
+    clean = deduped;
+
     return clean;
   }
 

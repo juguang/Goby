@@ -679,3 +679,158 @@ describe('enforceMessageLimit', function () {
     }
   });
 });
+
+// ================================================================
+//   sanitizeMessages (260620-i08 Task 2)
+//   全数组扫描移除孤立 tool（双保险）
+// ================================================================
+describe('sanitizeMessages', function () {
+  beforeEach(function () {
+    jest.resetModules();
+    jest.clearAllMocks();
+    chrome.storage.local._reset();
+    document.querySelectorAll('.goby-floating-ball, #goby-panel-host').forEach(function (el) { el.remove(); });
+  });
+
+  // ---------------------------------------------------------------
+  //  Test 1: 末尾悬空 assistant.tool_calls 仍被移除（回归保护）
+  //  原 while 循环保留，新增扫描不应破坏此行为
+  // ---------------------------------------------------------------
+  test('Test 1: trailing dangling assistant.tool_calls removed (regression)', function () {
+    loadAgentModules();
+    var internals = window.__gobyInternals;
+    expect(typeof internals.sanitizeMessages).toBe('function');
+
+    var input = [
+      { role: 'user', content: 'hi' },
+      {
+        role: 'assistant',
+        content: '',
+        tool_calls: [{ id: 'dangling', type: 'function', function: { name: 'p', arguments: '{}' } }]
+      }
+    ];
+
+    var result = internals.sanitizeMessages(input);
+    // 末尾的 assistant.tool_calls 必须被移除
+    expect(result.length).toBe(1);
+    expect(result[0].role).toBe('user');
+    // 最后一条不应该是带 tool_calls 的 assistant
+    var last = result[result.length - 1];
+    expect(last.tool_calls).toBeUndefined();
+  });
+
+  // ---------------------------------------------------------------
+  //  Test 2: 中间孤立 tool 被移除（核心新增能力）
+  //  tool.tool_call_id='GHOST' 不匹配任何 assistant.tool_calls
+  // ---------------------------------------------------------------
+  test('Test 2: middle orphaned tool removed by full-array scan', function () {
+    loadAgentModules();
+    var internals = window.__gobyInternals;
+
+    var input = [
+      { role: 'user', content: 'u1' },
+      {
+        role: 'tool',
+        tool_call_id: 'GHOST',
+        name: 'page_query',
+        content: 'ghost-result'
+      },
+      { role: 'assistant', content: 'reply' }
+    ];
+
+    var result = internals.sanitizeMessages(input);
+    // GHOST tool 必须被移除
+    var roles = result.map(function (m) { return m.role; });
+    expect(roles).toContain('user');
+    expect(roles).toContain('assistant');
+    // 不能有孤立的 tool(tool_call_id='GHOST')
+    for (var i = 0; i < result.length; i++) {
+      if (result[i].role === 'tool' && result[i].tool_call_id === 'GHOST') {
+        throw new Error('Orphaned tool GHOST should have been removed');
+      }
+    }
+  });
+
+  // ---------------------------------------------------------------
+  //  Test 3: 正常配对的 tool 保留
+  //  assistant(tool_calls id='OK') + tool(tool_call_id='OK') 双双保留
+  // ---------------------------------------------------------------
+  test('Test 3: properly paired tool preserved', function () {
+    loadAgentModules();
+    var internals = window.__gobyInternals;
+
+    var input = [
+      {
+        role: 'assistant',
+        content: '',
+        tool_calls: [{ id: 'OK', type: 'function', function: { name: 'page_query', arguments: '{}' } }]
+      },
+      { role: 'tool', tool_call_id: 'OK', name: 'page_query', content: 'ok-result' }
+    ];
+
+    var result = internals.sanitizeMessages(input);
+    expect(result.length).toBe(2);
+    expect(result[0].role).toBe('assistant');
+    expect(result[0].tool_calls.length).toBe(1);
+    expect(result[0].tool_calls[0].id).toBe('OK');
+    expect(result[1].role).toBe('tool');
+    expect(result[1].tool_call_id).toBe('OK');
+  });
+
+  // ---------------------------------------------------------------
+  //  Test 4: 多 assistant.tool_calls 全部 id 进 knownToolCallIds
+  //  assistant(tool_calls=[A,B]) + tool(A) + tool(B) 三条全保留
+  // ---------------------------------------------------------------
+  test('Test 4: multi assistant.tool_calls ids all tracked', function () {
+    loadAgentModules();
+    var internals = window.__gobyInternals;
+
+    var input = [
+      {
+        role: 'assistant',
+        content: '',
+        tool_calls: [
+          { id: 'A', type: 'function', function: { name: 'p', arguments: '{}' } },
+          { id: 'B', type: 'function', function: { name: 'p', arguments: '{}' } }
+        ]
+      },
+      { role: 'tool', tool_call_id: 'A', name: 'p', content: 'A-result' },
+      { role: 'tool', tool_call_id: 'B', name: 'p', content: 'B-result' }
+    ];
+
+    var result = internals.sanitizeMessages(input);
+    expect(result.length).toBe(3);
+    expect(result[0].role).toBe('assistant');
+    expect(result[0].tool_calls.length).toBe(2);
+    expect(result[1].role).toBe('tool');
+    expect(result[1].tool_call_id).toBe('A');
+    expect(result[2].role).toBe('tool');
+    expect(result[2].tool_call_id).toBe('B');
+  });
+
+  // ---------------------------------------------------------------
+  //  Test 5: tool_call_id 缺失的 tool 被移除（损坏数据兜底）
+  // ---------------------------------------------------------------
+  test('Test 5: tool without tool_call_id removed', function () {
+    loadAgentModules();
+    var internals = window.__gobyInternals;
+
+    var input = [
+      { role: 'user', content: 'u1' },
+      // 损坏的 tool：role 是 tool 但没 tool_call_id
+      { role: 'tool', content: 'corrupted-no-id' },
+      { role: 'assistant', content: 'final' }
+    ];
+
+    var result = internals.sanitizeMessages(input);
+    // 损坏的 tool 必须被移除
+    for (var i = 0; i < result.length; i++) {
+      if (result[i].role === 'tool') {
+        throw new Error('Tool without tool_call_id should have been removed');
+      }
+    }
+    expect(result.length).toBe(2);
+    expect(result[0].role).toBe('user');
+    expect(result[1].role).toBe('assistant');
+  });
+});
