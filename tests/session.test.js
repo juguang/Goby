@@ -957,4 +957,55 @@ describe('navigation resume', function () {
     // roundCount 应 +1
     expect(internal.roundCount).toBe(roundBefore + 1);
   });
+
+  // ---------------------------------------------------------------
+  //  BR-9: 工具结果含 navigation started → 主动 break 循环（Fix BR-2）
+  // ---------------------------------------------------------------
+  test('BR-9: navigation started in tool result breaks loop immediately', async function () {
+    loadModules();
+    await flushMicrotasks();
+
+    var origin = 'https://example.com';
+    window.GobyAgent.createSession(origin);
+    var internal = window.__gobyInternals._agentState;
+    internal.activeOrigin = origin;
+    internal.messages.push({ role: 'user', content: '搜索' });
+
+    var llmCalls = 0;
+    chrome.runtime.sendMessage.mockImplementation(function (msg, callback) {
+      if (msg && msg.action === 'llm-stream') {
+        llmCalls++;
+        process.nextTick(function () {
+          if (!window.GobyAgent || !window.GobyAgent.handleStreamChunk) return;
+          window.GobyAgent.handleStreamChunk({
+            type: 'done', done: true, content: '',
+            message: {
+              role: 'assistant',
+              content: '',
+              tool_calls: {
+                '0': {
+                  id: 'call_pe_1', type: 'function',
+                  function: { name: 'page_evaluate', arguments: { expression: 'test' } }
+                }
+              }
+            }
+          });
+        });
+        return Promise.resolve();
+      }
+      if (msg && msg.action === 'page-evaluate') {
+        // 模拟 navigation started 返回值
+        if (callback) callback('Clicked: #btn (navigation started, agent loop will pause until new page loads)');
+        return undefined;
+      }
+      if (callback) callback(undefined);
+      return Promise.resolve({});
+    });
+
+    await window.GobyAgent.processAgentMessage('search', {});
+    await flushMicrotasks();
+
+    // Fix BR-2: navigation started 后立即 break，只调 1 次 LLM
+    expect(llmCalls).toBe(1);
+  });
 });

@@ -2510,9 +2510,27 @@
         // 推送工具结果
         pushResultsToMessages(results);
 
+        // Fix BR-2: 工具结果含 navigation started → 主动 break 循环
+        // 避免在 navigation 期间继续调 LLM 导致 tool_calls 配对断裂
+        // 约定式通用：任何工具结果含 "(navigation started" 都触发 break
+        // saveSession 时 isProcessing=true → interrupted=true → 新 page 自动续跑
+        var navStarted = false;
+        for (var ni = 0; ni < results.length; ni++) {
+          if (typeof results[ni].content === 'string' &&
+              results[ni].content.indexOf('(navigation started') !== -1) {
+            navStarted = true;
+            break;
+          }
+        }
+
         // 同步保存到 storage（避免依赖 beforeunload 异步保存被截断）
         // 通过 window.GobyAgent.saveSession 调用 — 测试可 spy（Plan 03-03 既定模式）
         window.GobyAgent.saveSession();
+
+        if (navStarted) {
+          // saveSession 已标记 interrupted=true，新 page 自动续跑
+          break;
+        }
 
         loopCount++;
 
