@@ -1570,13 +1570,18 @@
      * 初始化面板
      * - 创建悬浮球（始终显示）
      * - 面板默认隐藏；要自动展开走 autoStart（content-script.js 检查并调用 show()）
-     * - 不再跨页面恢复 isVisible — 避免一次展开后所有页面都被强制弹出
+     * - 跨页面（含整页跳转）恢复 isVisible — 用户上次显式 toggle 的状态通过 chrome.storage.local.gobyPanelState 持久化
+     * - 首次安装默认 false；用户 toggle 后状态跨页面同步
      * @returns {Promise<void>}
      */
     init: function () {
-      return chrome.storage.local.get(['gobyPanelState']).then(function () {
-        state.isVisible = false;
+      return chrome.storage.local.get(['gobyPanelState']).then(function (result) {
+        var prev = (result && result.gobyPanelState) || {};
+        state.isVisible = prev.isVisible === true;
         createFloatingBall();
+        if (state.isVisible) {
+          animateShow();
+        }
       });
     },
 

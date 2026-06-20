@@ -778,3 +778,57 @@ describe('Message Bubble Rendering', function () {
     });
   });
 });
+
+// ============================================================
+//  Describe: Panel init isVisible restore (quick-260620-ii7 Fix A)
+//  整页跳转后从 chrome.storage.local.gobyPanelState.isVisible 恢复
+// ============================================================
+
+describe('Panel init isVisible restore', function () {
+  beforeEach(function () {
+    chrome.storage.local._reset();
+    jest.clearAllMocks();
+    ['.goby-floating-ball', '.goby-panel-container', '#goby-panel-host']
+      .forEach(function (sel) {
+        var list = document.querySelectorAll(sel);
+        list.forEach(function (el) {
+          if (el && el.parentNode) el.parentNode.removeChild(el);
+        });
+      });
+  });
+
+  it('restores isVisible=true from chrome.storage.local on init', function () {
+    chrome.storage.local._raw.gobyPanelState = { isVisible: true };
+    return GobyPanel.init().then(function () {
+      expect(GobyPanel.getState().isVisible).toBe(true);
+    });
+  });
+
+  it('restores isVisible=false from chrome.storage.local on init', function () {
+    chrome.storage.local._raw.gobyPanelState = { isVisible: false };
+    return GobyPanel.init().then(function () {
+      expect(GobyPanel.getState().isVisible).toBe(false);
+    });
+  });
+
+  it('defaults isVisible=false on first install (empty storage)', function () {
+    return GobyPanel.init().then(function () {
+      expect(GobyPanel.getState().isVisible).toBe(false);
+    });
+  });
+
+  it('calls animateShow when restoring isVisible=true (panel className has goby-panel-visible)', function () {
+    chrome.storage.local._raw.gobyPanelState = { isVisible: true };
+    return GobyPanel.init().then(function () {
+      expect(GobyPanel.getState().isVisible).toBe(true);
+      var host = document.getElementById('goby-panel-host');
+      // init 在 isVisible=true 时应通过 animateShow 创建 panel shell 并应用 visible class
+      expect(host).not.toBeNull();
+      var sr = host.shadowRoot;
+      expect(sr).not.toBeNull();
+      var panel = sr.querySelector('.goby-panel');
+      expect(panel).not.toBeNull();
+      expect(panel.className).toContain('goby-panel-visible');
+    });
+  });
+});
