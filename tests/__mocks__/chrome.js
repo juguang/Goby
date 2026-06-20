@@ -83,6 +83,16 @@ global.chrome = {
     onUpdated: {
       addListener: jest.fn(),
       removeListener: jest.fn()
+    },
+    // Phase 8 (NAV-09 / D-16): 工作 Tab 关闭检测
+    onRemoved: {
+      addListener: jest.fn()
+    }
+  },
+  // Phase 8 (Pitfall 3 兜底): 窗口关闭时 tabs.onRemoved 可能不触发，加 windows.onRemoved 兜底
+  windows: {
+    onRemoved: {
+      addListener: jest.fn()
     }
   },
   scripting: {
