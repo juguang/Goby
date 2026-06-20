@@ -647,3 +647,314 @@ describe('Session Sidebar UI', function () {
     expect(saveCall[0].sessionData.preview).toBe('帮我搜索需求文档中关于合同管理的部分，我需要找到最新的合同模');
   });
 });
+
+// ================================================================
+//   Fix BR: Navigation Resume — isProcessing 状态驱动的跨 navigation 续跑
+//   Tests BR-1 ~ BR-8
+// ================================================================
+
+describe('navigation resume', function () {
+  function flushMicrotasks() {
+    return new Promise(function (resolve) { setTimeout(resolve, 50); });
+  }
+
+  beforeEach(function () {
+    jest.resetModules();
+    jest.clearAllMocks();
+    chrome.storage.local._reset();
+    document.querySelectorAll('.goby-floating-ball, #goby-panel-host').forEach(function (el) {
+      if (el && el.parentNode) el.parentNode.removeChild(el);
+    });
+    chrome.runtime.sendMessage.mockResolvedValue(undefined);
+  });
+
+  // ---------------------------------------------------------------
+  //  BR-1: saveSession 在 isProcessing=true 时写入 interrupted=true + interruptedAt=数字
+  // ---------------------------------------------------------------
+  test('BR-1: saveSession marks interrupted=true when isProcessing=true', async function () {
+    loadModules();
+
+    var origin = 'https://example.com';
+    window.GobyAgent.createSession(origin);
+
+    var internal = window.__gobyInternals._agentState;
+    internal.activeOrigin = origin;
+    internal.messages.push({ role: 'user', content: '搜索合同模板' });
+    internal.isProcessing = true;
+
+    await window.GobyAgent.saveSession();
+
+    var saveCall = chrome.runtime.sendMessage.mock.calls.find(function (call) {
+      return call[0] && call[0].action === 'save-session';
+    });
+    expect(saveCall).toBeDefined();
+    expect(saveCall[0].sessionData.interrupted).toBe(true);
+    expect(typeof saveCall[0].sessionData.interruptedAt).toBe('number');
+    expect(saveCall[0].sessionData.interruptedAt).toBeGreaterThan(0);
+  });
+
+  // ---------------------------------------------------------------
+  //  BR-2: saveSession 在 isProcessing=false 时 interrupted=false + interruptedAt=null
+  // ---------------------------------------------------------------
+  test('BR-2: saveSession marks interrupted=false when isProcessing=false', async function () {
+    loadModules();
+
+    var origin = 'https://example.com';
+    window.GobyAgent.createSession(origin);
+
+    var internal = window.__gobyInternals._agentState;
+    internal.activeOrigin = origin;
+    internal.messages.push({ role: 'user', content: '搜索合同模板' });
+    internal.isProcessing = false;
+
+    await window.GobyAgent.saveSession();
+
+    var saveCall = chrome.runtime.sendMessage.mock.calls.find(function (call) {
+      return call[0] && call[0].action === 'save-session';
+    });
+    expect(saveCall).toBeDefined();
+    expect(saveCall[0].sessionData.interrupted).toBe(false);
+    expect(saveCall[0].sessionData.interruptedAt).toBeNull();
+  });
+
+  // ---------------------------------------------------------------
+  //  BR-3: loadSession 返回的对象保留 interrupted + interruptedAt 字段
+  // ---------------------------------------------------------------
+  test('BR-3: loadSession returns object with interrupted + interruptedAt fields', async function () {
+    loadModules();
+
+    var origin = 'https://example.com';
+    var sessions = {};
+    sessions['session_hash_100'] = {
+      origin: origin,
+      title: 'example.com',
+      updatedAt: 100,
+      messageCount: 2,
+      preview: '搜索合同模板',
+      messages: [
+        { role: 'system', content: 'sys' },
+        { role: 'user', content: '搜索合同模板' }
+      ],
+      interrupted: true,
+      interruptedAt: 99
+    };
+    await chrome.storage.local.set({ gobySessions: sessions });
+
+    var result = await window.GobyAgent.loadSession(origin);
+
+    expect(result).not.toBeNull();
+    expect(result.interrupted).toBe(true);
+    expect(result.interruptedAt).toBe(99);
+  });
+
+  // ---------------------------------------------------------------
+  //  BR-4: initSession 在 interrupted=true && within 60s 时调 processAgentMessage(null, {resume:true})
+  // ---------------------------------------------------------------
+  test('BR-4: initSession triggers resume when interrupted and within 60s window', async function () {
+    loadModules();
+    await flushMicrotasks();
+
+    // initSession 用 window.location.origin 作为 key（jsdom 默认 http://localhost）
+    var origin = window.location.origin;
+    var sessions = {};
+    sessions['session_hash_' + Date.now()] = {
+      origin: origin,
+      title: 'localhost',
+      updatedAt: Date.now(),
+      messageCount: 2,
+      preview: '搜索合同模板',
+      messages: [
+        { role: 'system', content: 'sys' },
+        { role: 'user', content: '搜索合同模板' }
+      ],
+      interrupted: true,
+      interruptedAt: Date.now() - 5000 // 5s 前
+    };
+    await chrome.storage.local.set({ gobySessions: sessions });
+
+    var resumeSpy = jest.spyOn(window.GobyAgent, 'processAgentMessage').mockImplementation(function () {
+      return Promise.resolve();
+    });
+
+    window.GobyAgent.initSession();
+
+    await flushMicrotasks();
+
+    expect(resumeSpy).toHaveBeenCalled();
+    var lastCall = resumeSpy.mock.calls[resumeSpy.mock.calls.length - 1];
+    expect(lastCall[0]).toBeNull();
+    expect(lastCall[1]).toEqual({ resume: true });
+
+    resumeSpy.mockRestore();
+  });
+
+  // ---------------------------------------------------------------
+  //  BR-5: initSession 在 interrupted=true && expired (>60s) 时不调 processAgentMessage
+  // ---------------------------------------------------------------
+  test('BR-5: initSession skips resume when interrupted expired >60s', async function () {
+    loadModules();
+    await flushMicrotasks();
+
+    var origin = window.location.origin;
+    var sessions = {};
+    sessions['session_hash_' + Date.now()] = {
+      origin: origin,
+      title: 'localhost',
+      updatedAt: Date.now(),
+      messageCount: 2,
+      preview: '搜索合同模板',
+      messages: [
+        { role: 'system', content: 'sys' },
+        { role: 'user', content: '搜索合同模板' }
+      ],
+      interrupted: true,
+      interruptedAt: Date.now() - 61000 // 61s 前（过期）
+    };
+    await chrome.storage.local.set({ gobySessions: sessions });
+
+    var resumeSpy = jest.spyOn(window.GobyAgent, 'processAgentMessage').mockImplementation(function () {
+      return Promise.resolve();
+    });
+
+    window.GobyAgent.initSession();
+
+    await flushMicrotasks();
+
+    // 不应以 (null, {resume:true}) 模式调用
+    var resumeCall = resumeSpy.mock.calls.find(function (call) {
+      return call[0] === null && call[1] && call[1].resume === true;
+    });
+    expect(resumeCall).toBeUndefined();
+
+    resumeSpy.mockRestore();
+  });
+
+  // ---------------------------------------------------------------
+  //  BR-6: initSession 在 interrupted=false 时不调 processAgentMessage resume 模式
+  // ---------------------------------------------------------------
+  test('BR-6: initSession skips resume when interrupted=false', async function () {
+    loadModules();
+    await flushMicrotasks();
+
+    var origin = window.location.origin;
+    var sessions = {};
+    sessions['session_hash_' + Date.now()] = {
+      origin: origin,
+      title: 'localhost',
+      updatedAt: Date.now(),
+      messageCount: 2,
+      preview: '搜索合同模板',
+      messages: [
+        { role: 'system', content: 'sys' },
+        { role: 'user', content: '搜索合同模板' }
+      ],
+      interrupted: false,
+      interruptedAt: null
+    };
+    await chrome.storage.local.set({ gobySessions: sessions });
+
+    var resumeSpy = jest.spyOn(window.GobyAgent, 'processAgentMessage').mockImplementation(function () {
+      return Promise.resolve();
+    });
+
+    window.GobyAgent.initSession();
+
+    await flushMicrotasks();
+
+    var resumeCall = resumeSpy.mock.calls.find(function (call) {
+      return call[0] === null && call[1] && call[1].resume === true;
+    });
+    expect(resumeCall).toBeUndefined();
+
+    resumeSpy.mockRestore();
+  });
+
+  // ---------------------------------------------------------------
+  //  BR-7: processAgentMessage(null, {resume:true}) 不 push user 消息 + 不增 roundCount
+  // ---------------------------------------------------------------
+  test('BR-7: processAgentMessage resume mode skips user push + roundCount', async function () {
+    loadModules();
+    // 等 IIFE 内 GobyPanel.init().then(() => initSession()) 完成
+    // 否则 initSession 的 createSession 会异步重置 messages
+    await flushMicrotasks();
+
+    var origin = 'https://example.com';
+    window.GobyAgent.createSession(origin);
+    var internal = window.__gobyInternals._agentState;
+    internal.activeOrigin = origin;
+    // 手动 push 一条 user 消息模拟已存在对话
+    internal.messages.push({ role: 'user', content: '搜索合同模板' });
+
+    var msgCountBefore = internal.messages.length;
+    var roundBefore = internal.roundCount;
+
+    // mock callLLMStream 让循环立即返回空响应
+    chrome.runtime.sendMessage.mockImplementation(function (msg) {
+      if (msg && msg.action === 'llm-stream') {
+        process.nextTick(function () {
+          if (window.GobyAgent && window.GobyAgent.handleStreamChunk) {
+            window.GobyAgent.handleStreamChunk({
+              type: 'done', done: true,
+              content: '好的',
+              message: { role: 'assistant', content: '好的' }
+            });
+          }
+        });
+        return Promise.resolve();
+      }
+      return Promise.resolve({});
+    });
+
+    await window.GobyAgent.processAgentMessage(null, { resume: true });
+    await flushMicrotasks();
+
+    // 不应新增 user 消息（只 +1 assistant）
+    expect(internal.messages.length).toBe(msgCountBefore + 1);
+    expect(internal.messages[msgCountBefore].role).toBe('assistant');
+    // roundCount 不应增加
+    expect(internal.roundCount).toBe(roundBefore);
+  });
+
+  // ---------------------------------------------------------------
+  //  BR-8: processAgentMessage('hello', {}) 正常 push user + roundCount++ (回归保护)
+  // ---------------------------------------------------------------
+  test('BR-8: processAgentMessage normal mode pushes user + increments roundCount', async function () {
+    loadModules();
+    // 等 IIFE 内 GobyPanel.init().then(() => initSession()) 完成
+    await flushMicrotasks();
+
+    var origin = 'https://example.com';
+    window.GobyAgent.createSession(origin);
+    var internal = window.__gobyInternals._agentState;
+    internal.activeOrigin = origin;
+
+    var msgCountBefore = internal.messages.length;
+    var roundBefore = internal.roundCount;
+
+    chrome.runtime.sendMessage.mockImplementation(function (msg) {
+      if (msg && msg.action === 'llm-stream') {
+        process.nextTick(function () {
+          if (window.GobyAgent && window.GobyAgent.handleStreamChunk) {
+            window.GobyAgent.handleStreamChunk({
+              type: 'done', done: true,
+              content: '你好',
+              message: { role: 'assistant', content: '你好' }
+            });
+          }
+        });
+        return Promise.resolve();
+      }
+      return Promise.resolve({});
+    });
+
+    await window.GobyAgent.processAgentMessage('hello', {});
+    await flushMicrotasks();
+
+    // 应新增 user + assistant 两条
+    expect(internal.messages.length).toBe(msgCountBefore + 2);
+    expect(internal.messages[msgCountBefore].role).toBe('user');
+    expect(internal.messages[msgCountBefore + 1].role).toBe('assistant');
+    // roundCount 应 +1
+    expect(internal.roundCount).toBe(roundBefore + 1);
+  });
+});

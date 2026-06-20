@@ -1933,13 +1933,18 @@
 
     var msgs = stripDanglingToolCalls(JSON.parse(JSON.stringify(_agentState.messages)));
 
+    // Fix BR: 记录 Agent 循环是否在跑 — navigation 后新 page 据此判断是否续跑
+    var isProcessing = _agentState.isProcessing === true;
+
     var sessionData = {
       origin: _agentState.activeOrigin,
       title: hostname,
       updatedAt: Date.now(),
       messageCount: msgCount,
       preview: preview,
-      messages: msgs
+      messages: msgs,
+      interrupted: isProcessing,
+      interruptedAt: isProcessing ? Date.now() : null
     };
 
     // 委托 SW 保存（SW 寿命长于 page，navigation 后仍能完成 storage.set）
@@ -2377,21 +2382,27 @@
    * 路由文本回复 vs 工具调用
    * @param {string} userText - 用户消息文本
    */
-  async function processAgentMessage(userText) {
+  async function processAgentMessage(userText, options) {
     if (_agentState.isProcessing) return;
     _agentState.isProcessing = true;
     _agentState.connectionStatus = 'green';
     GobyPanel.updateConnectionStatus('green');
 
+    // Fix BR: resume 模式跳过 user 消息 push + roundCount 自增
+    // 用于跨 navigation 续跑（initSession 检测到 interrupted 后自动调起）
+    var isResume = options && options.resume === true;
+
     // 重置工具失败计数（跨轮次累计，但重置前需保留已有计数）
     // 注意：_toolCallFailCounts 保留，在 executeWithTimeout 中连续 3 次失败会跳过
 
-    // 追加用户消息到消息历史（面板已由 panel.js 渲染）
-    _agentState.messages.push({ role: 'user', content: userText });
+    if (!isResume) {
+      // 追加用户消息到消息历史（面板已由 panel.js 渲染）
+      _agentState.messages.push({ role: 'user', content: userText });
 
-    // Phase 03 UAT 测试 4：会话累计轮数（不在末尾重置）
-    _agentState.roundCount++;
-    GobyPanel.updateRoundCount(_agentState.roundCount);
+      // Phase 03 UAT 测试 4：会话累计轮数（不在末尾重置）
+      _agentState.roundCount++;
+      GobyPanel.updateRoundCount(_agentState.roundCount);
+    }
 
     var loopCount = 0;
     var loopExitedByLimit = false;
@@ -2668,6 +2679,8 @@
     deleteAllSessions: deleteAllSessions,
     cleanupOldSessions: cleanupOldSessions,
     switchToSession: switchToSession,
+    // Fix BR: 暴露 initSession 供 jest 测试验证 resume 触发
+    initSession: initSession,
     getState: function () {
       return {
         messages: _agentState.messages.slice(),
@@ -2682,14 +2695,18 @@
   // ---- Plan 03-03: 会话初始化 + URL 变化监听 ----
   // Phase 03 UAT 测试 5：initSession 由 GobyPanel.init().then() 触发（不再立即调用）
   // 这样 loadSession 完成时面板已就绪，能正确渲染历史消息
+  // Fix BR: loadSession 完成后检查 session.interrupted —— 若 60s 内被打断的 Agent 循环
+  // 自动以 resume 模式续跑（不 push 新 user 消息、不增 roundCount）
   function initSession() {
     var origin = window.location.origin;
     // 同步创建会话（Plan 要求：createSession 初始化首个会话）
     createSession(origin);
     // 异步尝试加载已保存会话（loadSession 会替换初始创建）
     loadSession(origin).then(function (session) {
-      if (session) {
-        // loadSession 已恢复消息历史和状态
+      if (session && session.interrupted === true &&
+          session.interruptedAt && Date.now() - session.interruptedAt < 60000) {
+        // 续跑 — 通过 window.GobyAgent.processAgentMessage 调用以便测试可 spy
+        window.GobyAgent.processAgentMessage(null, { resume: true });
       }
     });
   }
