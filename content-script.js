@@ -614,29 +614,14 @@
   var TOOL_TIMEOUT = 15000;
 
   // ---- SYSTEM_PROMPT (AGENT-04, D-07) ----
+  // 静态前缀部分；工具列表在 nativeTools 声明后动态拼接（避免与 nativeTools 漂移）
   var SYSTEM_PROMPT = '你叫 Goby，是一个 AI 浏览器自动化助手。你可以使用工具来操作当前页面，用中文回答用户。\n' +
     '工具使用原则：\n' +
     '1. 先查后做 — 不确定页面结构时，先用 page_list_elements 或 page_query\n' +
     '2. 顺序执行 — 工具依次调用，每次一个，基于前一个结果决定下一步\n' +
     '3. 工具失败 — 尝试替代方案（不同选择器、不同方法），连续3次失败则跳过\n' +
     '4. 及时停止 — 获取足够信息回答用户后，立即停止调用工具，直接给出答案\n' +
-    '每次调用工具前，简要说明你的计划。任务完成后用一两句总结你做了什么。如果无法完成，说清楚原因和建议。\n\n' +
-    '可用工具：\n' +
-    '- page_query: 使用 CSS 选择器查询页面元素的内容\n' +
-    '- page_list_elements: 列出页面上所有交互元素\n' +
-    '- page_wait: 等待元素出现或等待指定时间\n' +
-    '- page_evaluate: 在页面中执行 JavaScript\n' +
-    '- page_fill: 填写表单输入框\n' +
-    '- page_click: 点击页面元素\n' +
-    '- page_check: 勾选或取消复选框\n' +
-    '- page_select: 选择下拉选项\n' +
-    '- page_submit: 提交表单\n' +
-    '- page_analyze: 分析当前页面的内容和主题\n' +
-    '- page_screenshot: 截取当前页面的截图\n' +
-    '- calculator: 执行数学计算\n' +
-    '- clipboard_read: 读取剪贴板\n' +
-    '- clipboard_write: 写入剪贴板\n' +
-    '- get_current_time: 获取当前时间';
+    '每次调用工具前，简要说明你的计划。任务完成后用一两句总结你做了什么。如果无法完成，说清楚原因和建议。\n\n';
 
   /**
    * getAttributes — 将元素的 NamedNodeMap 转换为纯对象
@@ -1441,6 +1426,12 @@
     }
   ];
 
+  // 动态拼接 SYSTEM_PROMPT 的可用工具列表 — 与 nativeTools 数组完全同步，避免漂移
+  var toolListLines = nativeTools.map(function (t) {
+    return '- ' + t.function.name + ': ' + t.function.description;
+  }).join('\n');
+  SYSTEM_PROMPT += '可用工具：\n' + toolListLines + '\n';
+
   /**
    * renderMarkdown — 安全渲染管道 (SEC-01, D-20/D-21/D-22)
    * @param {string} content - 原始 LLM 输出
@@ -2121,7 +2112,12 @@
     });
 
     if (!toolDef) {
-      return 'Error: 未知工具 ' + toolCall.function.name;
+      var availableTools = nativeTools.map(function (t) {
+        return t.function.name;
+      }).join(', ');
+      // 使用 UnknownTool: 前缀（区别于 Error:），让 executeWithTimeout 能识别"未知工具"
+      // 并跳过重试 — 重试永远是相同结果，留更多预算给真正的工具错误
+      return 'UnknownTool: 未知工具 "' + toolCall.function.name + '"。可用工具: ' + availableTools;
     }
 
     try {
@@ -2176,6 +2172,12 @@
           })
         ]).then(function (result) {
           if (timeoutId) clearTimeout(timeoutId);
+          // UnknownTool — 未知工具调用，重试无意义（结果永远相同）
+          // 立即 resolve，让 LLM 在下一轮基于"可用工具列表"消息纠正
+          if (typeof result === 'string' && result.startsWith('UnknownTool:')) {
+            resolve(result);
+            return;
+          }
           // 检查是否是错误结果
           if (typeof result === 'string' && result.startsWith('Error:')) {
             // 继续重试
@@ -2215,8 +2217,9 @@
         content: r.content
       });
 
-      // 渲染到面板
-      var isError = typeof r.content === 'string' && r.content.startsWith('Error:');
+      // 渲染到面板（UnknownTool 与 Error 都视为错误样式）
+      var isError = typeof r.content === 'string' &&
+        (r.content.startsWith('Error:') || r.content.startsWith('UnknownTool:'));
       GobyPanel.appendMessage(isError ? 'tool-error' : 'tool', r.content);
     }
   }
