@@ -742,16 +742,54 @@
               };
             });
 
-            // Phase 8 / NAV-07 / Pitfall 4 防御: 向 worker Tab 注入 workflow_id
+            // Phase 8 / NAV-07 / D-10 缺口补全: 向 worker Tab 注入 workflow_id +
+            //   inherited_messages（chat Tab 最后 5 条 messages）+ initial_user_message
+            //   （D-10：让工作 Tab 有 chat Tab 上下文 + 角色定位）
             // CS 未就绪时 retry 3 次 200ms — 全部失败也不阻塞 sendResponse
-            // （chat Tab 已知 workflow_id，worker Tab 失败仅影响 inherited context）
-            // 本 plan 仅注入基础 payload（workflow_id）；
-            // Plan 03 Task 5（D-10 缺口补全）会在本调用点补充 inherited_messages + initial_user_message
-            try {
-              sendToTabWithRetry(tab.id, { action: 'workflow-init', workflow_id: workflowId }, 3);
-            } catch (e) {
-              // 静默降级 — 不阻塞 sendResponse
-            }
+            // storage 拉取失败时降级 inherited_messages=[]，仍发基础 workflow-init
+            var workerOrigin = message.url;
+            var initialUserMessage = 'Working in workflow ' + workflowId + ', origin: ' + workerOrigin;
+            // 异步拉 chat Tab 最后 5 条 messages — 失败降级到 []
+            chrome.storage.local.get('gobySessions').then(function (gsResult) {
+              var sessions = (gsResult && gsResult.gobySessions) || {};
+              var chatOrigin = (sender.tab && sender.tab.url) ? sender.tab.url : '';
+              // 解析 sender.tab.url 的 origin
+              try {
+                if (sender.tab && sender.tab.url) {
+                  chatOrigin = new URL(sender.tab.url).origin;
+                }
+              } catch (e) { /* URL 解析失败 — 用原值降级 */ }
+              // 找到 origin 匹配的最新 session（按 updatedAt 倒序）
+              var matched = null;
+              try {
+                var entries = Object.keys(sessions)
+                  .map(function (k) { return sessions[k]; })
+                  .filter(function (s) { return s && s.origin === chatOrigin; })
+                  .sort(function (a, b) {
+                    return (b.updatedAt || 0) - (a.updatedAt || 0);
+                  });
+                if (entries.length > 0) matched = entries[0];
+              } catch (e) { /* 排序/过滤失败 — 降级 */ }
+              var inheritedMessages = [];
+              if (matched && Array.isArray(matched.messages)) {
+                inheritedMessages = matched.messages.slice(-5);
+              }
+              return inheritedMessages;
+            }).catch(function () {
+              // storage 异常 — 降级到空数组
+              return [];
+            }).then(function (inheritedMessages) {
+              try {
+                sendToTabWithRetry(tab.id, {
+                  action: 'workflow-init',
+                  workflow_id: workflowId,
+                  inherited_messages: inheritedMessages,
+                  initial_user_message: initialUserMessage
+                }, 3);
+              } catch (e) {
+                // 静默降级 — 不阻塞 sendResponse
+              }
+            });
 
             // sendResponse 字符串末尾追加 (workflow: <id>) — 让 chat Tab 知道启动了哪个 workflow
             sendResponse('已打开标签页: [' + tab.id + '] ' + (changeInfo.title || tab.title || '新标签页') + ' (workflow: ' + workflowId + ')');
