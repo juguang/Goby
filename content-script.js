@@ -618,7 +618,7 @@
 
     modal.appendChild(body);
     backdrop.appendChild(modal);
-    document.body.appendChild(backdrop);
+    document.documentElement.appendChild(backdrop);
 
     // ---- Event Wiring ----
 

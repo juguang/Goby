@@ -506,7 +506,7 @@
       GobyPanel.toggle();
     });
 
-    document.body.appendChild(ball);
+    document.documentElement.appendChild(ball);
     _ball = ball;
   }
 
@@ -1234,7 +1234,7 @@
     shadow.appendChild(styleEl);
     shadow.appendChild(panel);
 
-    document.body.appendChild(host);
+    document.documentElement.appendChild(host);
     _host = host;
 
     // 存储 DOM 引用
