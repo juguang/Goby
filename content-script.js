@@ -1469,6 +1469,126 @@
         var now = new Date();
         return '当前时间: ' + now.toLocaleString('zh-CN', { timeZone: 'Asia/Shanghai' });
       }
+    },
+    // === Phase 7: Tab Navigation Tools ===
+    {
+      type: 'function',
+      function: {
+        name: 'page_navigate',
+        description: 'Navigate the current tab to the specified URL (supports same-origin and cross-origin)',
+        parameters: {
+          type: 'object',
+          properties: {
+            url: { type: 'string', description: '目标 URL，如 https://example.com' }
+          },
+          required: ['url']
+        }
+      },
+      timeout: 15000,
+      execute: function (args) {
+        // D-14: 复用 BR/PCN navigation 检测模式
+        return new Promise(function (resolve) {
+          var navigated = false;
+          var onNav = function () { navigated = true; };
+          window.addEventListener('beforeunload', onNav);
+          window.addEventListener('pagehide', onNav);
+
+          chrome.runtime.sendMessage({action: 'tab-navigate', url: args.url}).then(function (response) {
+            window.removeEventListener('beforeunload', onNav);
+            window.removeEventListener('pagehide', onNav);
+            var result = String(response);
+            if (navigated && result.indexOf('Error:') !== 0) {
+              result += ' (navigation started, agent loop will pause until new page loads)';
+            }
+            resolve(result);
+          });
+        });
+      }
+    },
+    {
+      type: 'function',
+      function: {
+        name: 'page_open_tab',
+        description: 'Open a new tab with the specified URL. The new tab gets focus.',
+        parameters: {
+          type: 'object',
+          properties: {
+            url: { type: 'string', description: '要打开的 URL' }
+          },
+          required: ['url']
+        }
+      },
+      timeout: 15000,
+      execute: function (args) {
+        return new Promise(function (resolve) {
+          chrome.runtime.sendMessage({action: 'tab-open', url: args.url}).then(function (response) {
+            resolve(String(response));
+          });
+        });
+      }
+    },
+    {
+      type: 'function',
+      function: {
+        name: 'page_close_tab',
+        description: 'Close the tab with the specified tabId.',
+        parameters: {
+          type: 'object',
+          properties: {
+            tabId: { type: 'number', description: '要关闭的标签页 ID' }
+          },
+          required: ['tabId']
+        }
+      },
+      timeout: 15000,
+      execute: function (args) {
+        return new Promise(function (resolve) {
+          chrome.runtime.sendMessage({action: 'tab-close', tabId: args.tabId}).then(function (response) {
+            resolve(String(response));
+          });
+        });
+      }
+    },
+    {
+      type: 'function',
+      function: {
+        name: 'page_switch_tab',
+        description: 'Switch to the tab with the specified tabId.',
+        parameters: {
+          type: 'object',
+          properties: {
+            tabId: { type: 'number', description: '要切换到的标签页 ID' }
+          },
+          required: ['tabId']
+        }
+      },
+      timeout: 15000,
+      execute: function (args) {
+        return new Promise(function (resolve) {
+          chrome.runtime.sendMessage({action: 'tab-switch', tabId: args.tabId}).then(function (response) {
+            resolve(String(response));
+          });
+        });
+      }
+    },
+    {
+      type: 'function',
+      function: {
+        name: 'page_list_tabs',
+        description: 'List all tabs with their tabId, title, URL, and whether they are active.',
+        parameters: {
+          type: 'object',
+          properties: {}
+        }
+      },
+      timeout: 15000,
+      execute: function () {
+        return new Promise(function (resolve) {
+          chrome.runtime.sendMessage({action: 'tab-list'}).then(function (response) {
+            resolve(String(response));
+          });
+        });
+      }
     }
   ];
 
