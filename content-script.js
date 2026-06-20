@@ -1543,7 +1543,14 @@
       execute: function (args) {
         return new Promise(function (resolve) {
           sendToSW('tab-open', {action: 'tab-open', url: args.url}).then(function (response) {
-            resolve(String(response));
+            var result = String(response);
+            // Phase 8 / D-12 / BR-2 扩展：tab 打开成功（response 含 '(workflow:'）时
+            // 追加 '(workflow_started' 字符串让 processAgentMessage 的 BR-2 break detection
+            // 触发循环暂停 — 等 SW 转发的 workflow_complete/error 消息驱动新一次 processAgentMessage
+            if (result.indexOf('Error:') !== 0 && result.indexOf('(workflow:') !== -1) {
+              result += ' (workflow_started, agent loop will pause until workflow_complete)';
+            }
+            resolve(result);
           });
         });
       }
@@ -1606,6 +1613,40 @@
       execute: function () {
         return new Promise(function (resolve) {
           sendToSW('tab-list', {action: 'tab-list'}).then(function (response) {
+            resolve(String(response));
+          });
+        });
+      }
+    },
+    // Phase 8 / NAV-08 / D-13: page_finish_workflow — 工作 Tab Agent 完成任务时调用
+    // Pitfall 8 防御：description 明示只能在 worker tab 调用，避免 LLM 在 chat Tab 误调
+    {
+      type: 'function',
+      function: {
+        name: 'page_finish_workflow',
+        description: 'Only call this when running as a worker tab in a workflow. Call this when the workflow task is complete to send a summary back to the chat tab and end the workflow. Do NOT call this in the chat tab.',
+        parameters: {
+          type: 'object',
+          properties: {
+            summary: { type: 'string', description: 'A concise summary of what was accomplished in this workflow, to be displayed in the chat tab.' }
+          },
+          required: ['summary']
+        }
+      },
+      timeout: 15000,
+      execute: function (args) {
+        // Pitfall 8 防御：window.__gobyWorkflowId 缺失（chat Tab 或非工作流上下文）→ 直接返回 Error
+        // 不发送 SW 消息，避免 SW 收到无效 workflow_id 后误处理
+        if (!window.__gobyWorkflowId) {
+          return Promise.resolve('Error: page_finish_workflow 只能在工作 Tab 调用（未找到 workflow_id）');
+        }
+        var summary = (args && typeof args.summary === 'string') ? args.summary : '';
+        return new Promise(function (resolve) {
+          sendToSW('page-finish-workflow', {
+            action: 'page-finish-workflow',
+            workflow_id: window.__gobyWorkflowId,
+            summary: summary
+          }).then(function (response) {
             resolve(String(response));
           });
         });
@@ -2697,20 +2738,35 @@
         // 约定式通用：任何工具结果含 "(navigation started" 都触发 break
         // saveSession 时 isProcessing=true → interrupted=true → 新 page 自动续跑
         var navStarted = false;
+        // Phase 8 / D-12 / NAV-08: 扩展 BR-2 — 工具结果含 '(workflow_started' 也触发 break
+        // 与 navigation break 不同：workflow break 后**不**自动 resume（不靠 initSession resume
+        // 路径），而是等 SW 转发的 workflow_complete/error 消息触发新一次 processAgentMessage
+        var workflowStarted = false;
         for (var ni = 0; ni < results.length; ni++) {
-          if (typeof results[ni].content === 'string' &&
-              results[ni].content.indexOf('(navigation started') !== -1) {
-            navStarted = true;
-            break;
+          if (typeof results[ni].content === 'string') {
+            if (results[ni].content.indexOf('(navigation started') !== -1) {
+              navStarted = true;
+            }
+            if (results[ni].content.indexOf('(workflow_started') !== -1) {
+              workflowStarted = true;
+            }
           }
+          if (navStarted || workflowStarted) break;
         }
 
         // 同步保存到 storage（避免依赖 beforeunload 异步保存被截断）
         // 通过 window.GobyAgent.saveSession 调用 — 测试可 spy（Plan 03-03 既定模式）
+        // 注意：workflow break 仍调 saveSession（持久化当前工具结果），但 workflow 模式
+        // 不依赖 interrupted=true 续跑（chat Tab 等 onMessage workflow_complete 触发 resume）
         window.GobyAgent.saveSession();
 
         if (navStarted) {
           // saveSession 已标记 interrupted=true，新 page 自动续跑
+          break;
+        }
+        if (workflowStarted) {
+          // Phase 8 / D-12: workflow_started → break 循环，等 SW 转发 workflow_complete 续跑
+          // 不自动 resume — workflow 模式靠 onMessage workflow_complete 触发新一次 processAgentMessage
           break;
         }
 
