@@ -511,7 +511,6 @@
         var sessions = result.gobySessions || {};
         var keys = Object.keys(sessions);
         if (keys.length <= 50) {
-          sendResponse({ ok: true });
           return;
         }
         // 按 updatedAt 升序排序，删除最旧的
@@ -522,9 +521,36 @@
         for (var i = 0; i < toRemove; i++) {
           delete sessions[keys[i]];
         }
-        chrome.storage.local.set({ gobySessions: sessions }).then(function () {
-          sendResponse({ ok: true });
+        return chrome.storage.local.set({ gobySessions: sessions });
+      }).then(function () {
+        // Phase 8 / NAV-06 / D-03: 同步维护 lastActiveSessions 全局索引
+        // CS 永不直接写该 key（避免并发覆盖）；SW 单点维护，LRU 淘汰 10 条
+        // 索引更新失败不阻断 sendResponse 主流程（独立 catch 静默降级）
+        return chrome.storage.local.get('lastActiveSessions').then(function (idxResult) {
+          var index = idxResult.lastActiveSessions || [];
+          // 去重：剔除同 sessionId 旧记录
+          var filtered = index.filter(function (entry) {
+            return entry.sessionId !== sessionId;
+          });
+          // push 新记录
+          var newEntry = {
+            sessionId: sessionId,
+            origin: (sessionData && sessionData.origin) || '',
+            updatedAt: (sessionData && sessionData.updatedAt) || Date.now()
+          };
+          filtered.push(newEntry);
+          // 按 updatedAt desc 排序（最新在前）— 保证乱序写入时索引仍有序
+          filtered.sort(function (a, b) {
+            return (b.updatedAt || 0) - (a.updatedAt || 0);
+          });
+          // LRU 截断：保留最多 10 条
+          var capped = filtered.slice(0, 10);
+          return chrome.storage.local.set({ lastActiveSessions: capped });
+        }).catch(function () {
+          // 索引更新失败 — 静默降级，不阻断 sendResponse 主流程
         });
+      }).then(function () {
+        sendResponse({ ok: true });
       }).catch(function (err) {
         sendResponse({ ok: false, error: err.message || String(err) });
       });
