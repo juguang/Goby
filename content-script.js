@@ -1796,17 +1796,21 @@
         _streamResolve = resolve;
         _streamReject = reject;
 
-        // 发送 llm-stream 到 Service Worker
-        // 使用 Promise.resolve 包装以兼容未返回 Promise 的 mock 环境
-        Promise.resolve(chrome.runtime.sendMessage({
-          action: 'llm-stream',
-          messages: cleanMessages,
-          tools: tools
-        })).catch(function (err) {
-          reject(err);
-          _streamResolve = null;
-          _streamReject = null;
-        });
+        // 发送 llm-stream 到 Service Worker（带 context invalidated 重试）
+        var payload = { action: 'llm-stream', messages: cleanMessages, tools: tools };
+        function sendStream(retries) {
+          Promise.resolve(chrome.runtime.sendMessage(payload)).catch(function (err) {
+            var msg = String(err.message || err);
+            if (retries > 0 && msg.indexOf('Extension context invalidated') !== -1) {
+              setTimeout(function () { sendStream(retries - 1); }, 300);
+            } else {
+              reject(err);
+              _streamResolve = null;
+              _streamReject = null;
+            }
+          });
+        }
+        sendStream(2);
       });
     });
   }
@@ -1821,10 +1825,7 @@
     // 同样净化消息格式（page_analyze 等非流式调用也走此路径）
     var cleanMessages = sanitizeMessages(messages);
     return GobyStorage.getConfig().then(function (cfg) {
-      return chrome.runtime.sendMessage({
-        action: 'llm-request',
-        messages: cleanMessages
-      });
+      return sendToSW('llm-request', { action: 'llm-request', messages: cleanMessages });
     }).then(function (response) {
       return response;
     });
