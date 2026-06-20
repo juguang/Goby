@@ -2909,11 +2909,70 @@
     createSession(origin);
     // 异步尝试加载已保存会话（loadSession 会替换初始创建）
     loadSession(origin).then(function (session) {
-      if (session && session.interrupted === true &&
-          session.interruptedAt && Date.now() - session.interruptedAt < 60000) {
-        // 续跑 — 通过 window.GobyAgent.processAgentMessage 调用以便测试可 spy
-        window.GobyAgent.processAgentMessage(null, { resume: true });
+      if (session) {
+        // D-02: 同域名导航走原 loadSession 路径（已有 session），不触发跨域继承
+        if (session.interrupted === true &&
+            session.interruptedAt && Date.now() - session.interruptedAt < 60000) {
+          // 续跑 — 通过 window.GobyAgent.processAgentMessage 调用以便测试可 spy
+          window.GobyAgent.processAgentMessage(null, { resume: true });
+        }
+        return null;
       }
+
+      // D-01: 新 origin 无 session → 跨域继承最近他域 session 的最后 5 条 messages
+      // 失败应静默降级，不影响 createSession 已建立的空 session
+      // 注：不直接调 loadSessionById — 那会副作用式覆盖 _agentState（破坏当前 session）
+      return chrome.storage.local.get('lastActiveSessions').then(function (result) {
+        var entries = result.lastActiveSessions || [];
+        // 找第一条非当前 origin 的记录（索引按 updatedAt desc 排序，最近在前）
+        var crossEntry = null;
+        for (var ei = 0; ei < entries.length; ei++) {
+          if (entries[ei].origin !== origin) {
+            crossEntry = entries[ei];
+            break;
+          }
+        }
+        if (!crossEntry) {
+          return null;
+        }
+        // 只读拉取他域 session 数据（不污染当前 _agentState）
+        return chrome.storage.local.get('gobySessions').then(function (sessResult) {
+          var allSessions = sessResult.gobySessions || {};
+          var loaded = allSessions[crossEntry.sessionId];
+          if (!loaded || !Array.isArray(loaded.messages) || loaded.messages.length === 0) {
+            return null;
+          }
+          // D-04: 取最后 5 条（slice(-5)），并在前面插入 user-role marker
+          // marker 用 user-role 而非 system-role 避免污染 LLM
+          var inherited = loaded.messages.slice(-5);
+          _agentState.messages.push({
+            role: 'user',
+            content: '[Context inherited from ' + crossEntry.origin + ']'
+          });
+          for (var ii = 0; ii < inherited.length; ii++) {
+            _agentState.messages.push(inherited[ii]);
+          }
+          // 渲染 marker 与 inherited 消息到面板（跳过 system prompt）
+          if (window.GobyPanel && typeof window.GobyPanel.appendMessage === 'function') {
+            for (var ri = 0; ri < _agentState.messages.length; ri++) {
+              var msg = _agentState.messages[ri];
+              if (msg.role === 'system') continue;
+              var panelRole = msg.role;
+              if (panelRole === 'assistant') panelRole = 'bot';
+              if (panelRole === 'tool') {
+                var isError = typeof msg.content === 'string' && msg.content.startsWith('Error:');
+                panelRole = isError ? 'tool-error' : 'tool';
+              }
+              window.GobyPanel.appendMessage(panelRole, msg.content);
+            }
+          }
+          // 持久化（让 SW 把当前 session 加入 lastActiveSessions 索引）
+          saveSession();
+          return inherited;
+        });
+      });
+    }).catch(function () {
+      // 跨域拉取失败（storage 错误等）— 静默降级，保留 createSession 的空 session
     });
   }
 
