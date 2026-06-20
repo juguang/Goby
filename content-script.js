@@ -693,8 +693,28 @@
     }
   }
 
+  // SW message helper with retry for Extension context invalidation
+  function sendToSW(action, payload) {
+    return new Promise(function (resolve) {
+      function attempt(retries) {
+        try {
+          chrome.runtime.sendMessage(payload).then(resolve).catch(function (err) {
+            var msg = String(err.message || err);
+            if (retries > 0 && msg.indexOf('Extension context invalidated') !== -1) {
+              setTimeout(function () { attempt(retries - 1); }, 300);
+            } else {
+              resolve('Error: ' + (msg || 'sendMessage failed'));
+            }
+          });
+        } catch (e) {
+          resolve('Error: sendMessage threw - ' + String(e.message || e));
+        }
+      }
+      attempt(2);
+    });
+  }
+
   // ---- 15 个工具定义 (GOBY_DESIGN.md §四) ----
-  // Phase 3 实现 4 个简单工具，其余返回占位消息
   var nativeTools = [
     // 页面查询工具
     {
@@ -1470,26 +1490,6 @@
         return '当前时间: ' + now.toLocaleString('zh-CN', { timeZone: 'Asia/Shanghai' });
       }
     },
-    // SW message helper with retry for Extension context invalidation
-    function sendToSW(action, payload) {
-      return new Promise(function (resolve) {
-        function attempt(retries) {
-          try {
-            chrome.runtime.sendMessage(payload).then(resolve).catch(function (err) {
-              var msg = String(err.message || err);
-              if (retries > 0 && msg.indexOf('Extension context invalidated') !== -1) {
-                setTimeout(function () { attempt(retries - 1); }, 300);
-              } else {
-                resolve('Error: ' + (msg || 'sendMessage failed'));
-              }
-            });
-          } catch (e) {
-            resolve('Error: sendMessage threw - ' + String(e.message || e));
-          }
-        }
-        attempt(2);
-      });
-    }
 
     // === Phase 7: Tab Navigation Tools ===
     {
