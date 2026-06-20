@@ -21,6 +21,7 @@ describe('SW restart recovery (Phase 8 Plan 02)', function () {
   beforeEach(function () {
     // 清空 mock 状态 + 重置 storage
     jest.resetModules();
+    jest.useFakeTimers();
     chrome.storage.local._reset();
     chrome.tabs.sendMessage.mockClear();
     chrome.runtime.lastError = null;
@@ -31,6 +32,7 @@ describe('SW restart recovery (Phase 8 Plan 02)', function () {
   });
 
   afterEach(function () {
+    jest.useRealTimers();
     jest.restoreAllMocks();
   });
 
@@ -56,6 +58,7 @@ describe('SW restart recovery (Phase 8 Plan 02)', function () {
     // 必须先 flush microtasks 让 Promise 完成，否则 _activeWorkflows 仍是初始 {}
     return Promise.resolve().then().then().then().then().then(function () {
       // 模拟工作 Tab 发来 workflow-progress 消息（workflow_id 命中预置记录）
+      // sender.tab.id=2 === workerTabId 防 spoofing 校验通过
       var sender = { id: chrome.runtime.id, tab: { id: 2 } };
       listener(
         { action: 'workflow-progress', workflow_id: 'wf_x1234567', data: { content: 'hi' } },
@@ -63,13 +66,21 @@ describe('SW restart recovery (Phase 8 Plan 02)', function () {
         function () {}
       );
 
+      // Phase 8 Plan 03：handler 现在用 sendToTabWithRetry 异步转发（return true）
+      // 需 flush microtasks + advance fake timers 让 200ms 重试链走完
+      jest.advanceTimersByTime(250);
+      return Promise.resolve().then().then().then().then().then().then();
+    }).then(function () {
       // SW 应该用 chatTabId=1 转发该消息（从 storage 恢复的路由信息）
+      // Phase 8 Plan 03：转发消息 action='workflow_progress'（D-08 消息 schema，
+      // 与工作 Tab 入站 action='workflow-progress' 区分）
       expect(chrome.tabs.sendMessage).toHaveBeenCalledWith(
         1,
         expect.objectContaining({
-          action: 'workflow-progress',
+          action: 'workflow_progress',
           workflow_id: 'wf_x1234567'
-        })
+        }),
+        expect.any(Function)
       );
     });
   });
