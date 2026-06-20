@@ -2473,6 +2473,10 @@
         // 推送工具结果
         pushResultsToMessages(results);
 
+        // 同步保存到 storage（避免依赖 beforeunload 异步保存被截断）
+        // 通过 window.GobyAgent.saveSession 调用 — 测试可 spy（Plan 03-03 既定模式）
+        window.GobyAgent.saveSession();
+
         loopCount++;
 
         // 检查是否达到最大轮数
@@ -2486,6 +2490,9 @@
       } else {
         // 文本回复 — 已由 handleStreamChunk 完成流式渲染
         _agentState.messages.push({ role: 'assistant', content: (response && response.content) || '' });
+        // 同步保存到 storage（避免依赖 beforeunload 异步保存被截断）
+        // 通过 window.GobyAgent.saveSession 调用 — 测试可 spy（Plan 03-03 既定模式）
+        window.GobyAgent.saveSession();
         break;
       }
     }

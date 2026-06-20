@@ -734,3 +734,138 @@ describe('Status Integration', function () {
     roundSpy.mockRestore();
   });
 });
+
+// ================================================================
+//   Agent saveSession on message updates (quick-260620-ii7 Fix B)
+//   processAgentMessage 工具分支 + 文本分支均应主动 saveSession
+// ================================================================
+
+describe('Agent saveSession on message updates', function () {
+  beforeEach(function () {
+    jest.resetModules();
+    jest.clearAllMocks();
+    chrome.storage.local._reset();
+    document.querySelectorAll('.goby-floating-ball, #goby-panel-host').forEach(function (el) {
+      if (el && el.parentNode) el.parentNode.removeChild(el);
+    });
+    delete global.fetch;
+  });
+
+  function flushMicrotasks() {
+    return new Promise(function (resolve) { setTimeout(resolve, 50); });
+  }
+
+  // ---------------------------------------------------------------
+  //  Test 1: 工具分支 — pushResultsToMessages 后调用 saveSession
+  // ---------------------------------------------------------------
+  test('Test 1: tool branch invokes saveSession after pushResultsToMessages', async function () {
+    loadAgentModules();
+
+    var saveSpy = jest.spyOn(window.GobyAgent, 'saveSession').mockImplementation(function () {
+      return Promise.resolve();
+    });
+
+    chrome.runtime.sendMessage.mockImplementation(function (msg) {
+      if (msg && msg.action === 'llm-stream') {
+        process.nextTick(function () {
+          if (!window.GobyAgent || !window.GobyAgent.handleStreamChunk) return;
+          window.GobyAgent.handleStreamChunk({
+            type: 'done', done: true, content: '',
+            message: {
+              role: 'assistant',
+              content: '',
+              tool_calls: {
+                '0': {
+                  id: 'call_calc_1', type: 'function',
+                  function: { name: 'calculator', arguments: { expression: '2+2' } }
+                }
+              }
+            }
+          });
+        });
+        return Promise.resolve();
+      }
+      return Promise.resolve({});
+    });
+
+    window.GobyAgent.sendMessage('计算 2+2');
+
+    await flushMicrotasks();
+
+    expect(saveSpy).toHaveBeenCalled();
+    expect(saveSpy.mock.calls.length).toBeGreaterThanOrEqual(1);
+    saveSpy.mockRestore();
+  });
+
+  // ---------------------------------------------------------------
+  //  Test 2: 文本分支 — break 前调用 saveSession
+  // ---------------------------------------------------------------
+  test('Test 2: text branch invokes saveSession before break', async function () {
+    loadAgentModules();
+
+    var saveSpy = jest.spyOn(window.GobyAgent, 'saveSession').mockImplementation(function () {
+      return Promise.resolve();
+    });
+
+    chrome.runtime.sendMessage.mockImplementation(function (msg) {
+      if (msg && msg.action === 'llm-stream') {
+        process.nextTick(function () {
+          if (!window.GobyAgent || !window.GobyAgent.handleStreamChunk) return;
+          window.GobyAgent.handleStreamChunk({
+            type: 'done', done: true,
+            content: '你好！我是 Goby',
+            message: { role: 'assistant', content: '你好！我是 Goby' }
+          });
+        });
+        return Promise.resolve();
+      }
+      return Promise.resolve({});
+    });
+
+    window.GobyAgent.sendMessage('你好');
+
+    await flushMicrotasks();
+
+    expect(saveSpy).toHaveBeenCalled();
+    expect(saveSpy.mock.calls.length).toBeGreaterThanOrEqual(1);
+    saveSpy.mockRestore();
+  });
+
+  // ---------------------------------------------------------------
+  //  Test 3: fire-and-forget — saveSession 即使永不 resolve 也不阻塞循环
+  // ---------------------------------------------------------------
+  test('Test 3: saveSession is fire-and-forget, does not block agent loop', async function () {
+    loadAgentModules();
+
+    // saveSession 返回永不 resolve 的 Promise — 若被 await 会卡住整个循环
+    var pendingForever = new Promise(function () { /* never resolves */ });
+    var saveSpy = jest.spyOn(window.GobyAgent, 'saveSession').mockImplementation(function () {
+      return pendingForever;
+    });
+
+    chrome.runtime.sendMessage.mockImplementation(function (msg) {
+      if (msg && msg.action === 'llm-stream') {
+        process.nextTick(function () {
+          if (!window.GobyAgent || !window.GobyAgent.handleStreamChunk) return;
+          window.GobyAgent.handleStreamChunk({
+            type: 'done', done: true,
+            content: '完成',
+            message: { role: 'assistant', content: '完成' }
+          });
+        });
+        return Promise.resolve();
+      }
+      return Promise.resolve({});
+    });
+
+    window.GobyAgent.sendMessage('测试');
+
+    await flushMicrotasks();
+
+    var state = window.GobyAgent.getState();
+    // fire-and-forget 验证：saveSession 被调用过 AND 循环已结束（isProcessing=false）
+    expect(saveSpy).toHaveBeenCalled();
+    expect(state.isProcessing).toBe(false);
+    saveSpy.mockRestore();
+  });
+});
