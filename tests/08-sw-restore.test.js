@@ -52,23 +52,26 @@ describe('SW restart recovery (Phase 8 Plan 02)', function () {
     loadBackground();
     var listener = getOnMessageListener();
 
-    // 模拟工作 Tab 发来 workflow-progress 消息（workflow_id 命中预置记录）
-    var sender = { id: chrome.runtime.id, tab: { id: 2 } };
-    var received = null;
-    listener(
-      { action: 'workflow-progress', workflow_id: 'wf_x1234567', data: { content: 'hi' } },
-      sender,
-      function (resp) { received = resp; }
-    );
+    // 注意：SW top-level 用 chrome.storage.local.get().then() 异步恢复内存映射，
+    // 必须先 flush microtasks 让 Promise 完成，否则 _activeWorkflows 仍是初始 {}
+    return Promise.resolve().then().then().then().then().then(function () {
+      // 模拟工作 Tab 发来 workflow-progress 消息（workflow_id 命中预置记录）
+      var sender = { id: chrome.runtime.id, tab: { id: 2 } };
+      listener(
+        { action: 'workflow-progress', workflow_id: 'wf_x1234567', data: { content: 'hi' } },
+        sender,
+        function () {}
+      );
 
-    // SW 应该用 chatTabId=1 转发该消息（从 storage 恢复的路由信息）
-    expect(chrome.tabs.sendMessage).toHaveBeenCalledWith(
-      1,
-      expect.objectContaining({
-        action: 'workflow-progress',
-        workflow_id: 'wf_x1234567'
-      })
-    );
+      // SW 应该用 chatTabId=1 转发该消息（从 storage 恢复的路由信息）
+      expect(chrome.tabs.sendMessage).toHaveBeenCalledWith(
+        1,
+        expect.objectContaining({
+          action: 'workflow-progress',
+          workflow_id: 'wf_x1234567'
+        })
+      );
+    });
   });
 
   test('test 2: storage 为空时 loadBackground() 不报错，_activeWorkflows 内存映射为空对象', function () {
