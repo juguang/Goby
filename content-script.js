@@ -1470,6 +1470,27 @@
         return '当前时间: ' + now.toLocaleString('zh-CN', { timeZone: 'Asia/Shanghai' });
       }
     },
+    // SW message helper with retry for Extension context invalidation
+    function sendToSW(action, payload) {
+      return new Promise(function (resolve) {
+        function attempt(retries) {
+          try {
+            chrome.runtime.sendMessage(payload).then(resolve).catch(function (err) {
+              var msg = String(err.message || err);
+              if (retries > 0 && msg.indexOf('Extension context invalidated') !== -1) {
+                setTimeout(function () { attempt(retries - 1); }, 300);
+              } else {
+                resolve('Error: ' + (msg || 'sendMessage failed'));
+              }
+            });
+          } catch (e) {
+            resolve('Error: sendMessage threw - ' + String(e.message || e));
+          }
+        }
+        attempt(2);
+      });
+    }
+
     // === Phase 7: Tab Navigation Tools ===
     {
       type: 'function',
@@ -1493,7 +1514,7 @@
           window.addEventListener('beforeunload', onNav);
           window.addEventListener('pagehide', onNav);
 
-          chrome.runtime.sendMessage({action: 'tab-navigate', url: args.url}).then(function (response) {
+          sendToSW('tab-navigate', {action: 'tab-navigate', url: args.url}).then(function (response) {
             window.removeEventListener('beforeunload', onNav);
             window.removeEventListener('pagehide', onNav);
             var result = String(response);
@@ -1521,7 +1542,7 @@
       timeout: 15000,
       execute: function (args) {
         return new Promise(function (resolve) {
-          chrome.runtime.sendMessage({action: 'tab-open', url: args.url}).then(function (response) {
+          sendToSW('tab-open', {action: 'tab-open', url: args.url}).then(function (response) {
             resolve(String(response));
           });
         });
@@ -1543,7 +1564,7 @@
       timeout: 15000,
       execute: function (args) {
         return new Promise(function (resolve) {
-          chrome.runtime.sendMessage({action: 'tab-close', tabId: args.tabId}).then(function (response) {
+          sendToSW('tab-close', {action: 'tab-close', tabId: args.tabId}).then(function (response) {
             resolve(String(response));
           });
         });
@@ -1565,7 +1586,7 @@
       timeout: 15000,
       execute: function (args) {
         return new Promise(function (resolve) {
-          chrome.runtime.sendMessage({action: 'tab-switch', tabId: args.tabId}).then(function (response) {
+          sendToSW('tab-switch', {action: 'tab-switch', tabId: args.tabId}).then(function (response) {
             resolve(String(response));
           });
         });
@@ -1584,7 +1605,7 @@
       timeout: 15000,
       execute: function () {
         return new Promise(function (resolve) {
-          chrome.runtime.sendMessage({action: 'tab-list'}).then(function (response) {
+          sendToSW('tab-list', {action: 'tab-list'}).then(function (response) {
             resolve(String(response));
           });
         });
