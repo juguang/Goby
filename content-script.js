@@ -2209,18 +2209,27 @@
     for (var i = 0; i < results.length; i++) {
       var r = results[i];
 
-      // 追加到消息历史
+      // 截图结果特殊处理：dataUrl 渲染到 panel 但不进 messages 数组
+      // 避免 base64 占用大量 token 触发 context 超限
+      var isDataUrl = typeof r.content === 'string' &&
+        r.content.indexOf('data:image/') === 0;
+      var panelContent = r.content;
+      var messageContent = isDataUrl
+        ? 'Screenshot captured: image displayed as thumbnail in chat'
+        : r.content;
+
+      // 追加到消息历史（截图用简短文本替代 dataUrl）
       _agentState.messages.push({
         role: 'tool',
         tool_call_id: r.tool_call_id,
         name: r.name,
-        content: r.content
+        content: messageContent
       });
 
-      // 渲染到面板（UnknownTool 与 Error 都视为错误样式）
-      var isError = typeof r.content === 'string' &&
-        (r.content.startsWith('Error:') || r.content.startsWith('UnknownTool:'));
-      GobyPanel.appendMessage(isError ? 'tool-error' : 'tool', r.content);
+      // 渲染到面板（用原始 content，dataUrl 时走缩略图渲染分支 panel.js:603）
+      var isError = typeof panelContent === 'string' &&
+        (panelContent.startsWith('Error:') || panelContent.startsWith('UnknownTool:'));
+      GobyPanel.appendMessage(isError ? 'tool-error' : 'tool', panelContent);
     }
   }
 

@@ -1008,13 +1008,13 @@
         'color:white;background:rgba(255,255,255,0.2);border:none;' +
         'font-size:32px;cursor:pointer;width:44px;height:44px;' +
         'border-radius:50%;display:flex;align-items:center;justify-content:center;' +
-        'z-index:1;transition:background 0.15s;';
+        'z-index:10;transition:background 0.15s;';
 
     var overlayImgContainer = document.createElement('div');
     overlayImgContainer.style.cssText = 'padding:24px;';
 
     var overlayImg = document.createElement('img');
-    overlayImg.style.cssText = 'max-width:none;max-height:none;';
+    overlayImg.style.cssText = 'max-width:90vw;max-height:90vh;';
 
     overlayEl.appendChild(overlayCloseBtn);
     overlayImgContainer.appendChild(overlayImg);
