@@ -492,6 +492,45 @@
       return true; // 异步响应 — 保持 sendResponse 通道
     }
 
+    // Fix C: save-session — 把 saveSession 委托给 SW（SW 寿命长于 page，navigation 后仍能完成写入）
+    if (message.action === 'save-session') {
+      var sessionId = message.sessionId;
+      var sessionData = message.sessionData;
+      if (!sessionId || !sessionData) {
+        sendResponse({ ok: false, error: 'missing sessionId or sessionData' });
+        return false;
+      }
+      chrome.storage.local.get('gobySessions').then(function (result) {
+        var sessions = result.gobySessions || {};
+        sessions[sessionId] = sessionData;
+        return chrome.storage.local.set({ gobySessions: sessions });
+      }).then(function () {
+        // LRU 淘汰（保留最近 50 条）
+        return chrome.storage.local.get('gobySessions');
+      }).then(function (result) {
+        var sessions = result.gobySessions || {};
+        var keys = Object.keys(sessions);
+        if (keys.length <= 50) {
+          sendResponse({ ok: true });
+          return;
+        }
+        // 按 updatedAt 升序排序，删除最旧的
+        keys.sort(function (a, b) {
+          return (sessions[a].updatedAt || 0) - (sessions[b].updatedAt || 0);
+        });
+        var toRemove = keys.length - 50;
+        for (var i = 0; i < toRemove; i++) {
+          delete sessions[keys[i]];
+        }
+        chrome.storage.local.set({ gobySessions: sessions }).then(function () {
+          sendResponse({ ok: true });
+        });
+      }).catch(function (err) {
+        sendResponse({ ok: false, error: err.message || String(err) });
+      });
+      return true; // 异步响应
+    }
+
     // T-04-04: page-evaluate — 通过 MAIN world 执行 JS (D-07)
     if (message.action === 'page-evaluate') {
       if (!sender.tab) {

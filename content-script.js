@@ -1875,9 +1875,14 @@
   }
 
   /**
-   * saveSession — 将当前会话保存到 chrome.storage.local (SESS-01)
-   * Key: 'gobySessions', 结构见 PLAN.md
-   * 保存后调用 cleanupOldSessions 进行 LRU 淘汰
+   * saveSession — 将当前会话委托 SW 保存 (SESS-01, Fix C)
+   *
+   * Fix C 之前：直接调 chrome.storage.local.get/set，三次 IPC round trip
+   * 在 navigation 前没写完 → page 卸载后 IPC 中断 → 新 page loadSession 找不到旧会话。
+   *
+   * Fix C 之后：构造 sessionData + chrome.runtime.sendMessage 转发到 SW，
+   * SW 寿命长于 page，navigation 后仍能完成 storage.set + LRU 淘汰。
+   *
    * @returns {Promise<void>}
    */
   function saveSession() {
@@ -1920,15 +1925,19 @@
       messages: msgs
     };
 
-    // 读取现有 sessions → 合并当前 → 写入
-    return chrome.storage.local.get('gobySessions').then(function (result) {
-      var sessions = result.gobySessions || {};
-      sessions[_agentState.sessionId] = sessionData;
-
-      return chrome.storage.local.set({ gobySessions: sessions });
-    }).then(function () {
-      // LRU 淘汰
-      return cleanupOldSessions();
+    // 委托 SW 保存（SW 寿命长于 page，navigation 后仍能完成 storage.set）
+    // Promise.resolve 包装以兼容 jest 测试环境（Plan 03-02 D-26 模式）
+    return Promise.resolve(chrome.runtime.sendMessage({
+      action: 'save-session',
+      sessionId: _agentState.sessionId,
+      sessionData: sessionData
+    })).then(function (response) {
+      if (!response || !response.ok) {
+        // SW 保存失败 — 静默忽略（不阻塞 agent 循环）
+        return;
+      }
+    }).catch(function () {
+      // 测试环境可能没 chrome.runtime.sendMessage — 静默降级
     });
   }
 

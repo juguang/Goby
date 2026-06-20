@@ -144,10 +144,11 @@ describe('Session Persistence', function () {
   });
 
   // ---------------------------------------------------------------
-  //  Test 3: saveSession saves state.messages to chrome.storage.local
-  //  Key: 'gobySessions', includes origin/title/updatedAt/messageCount/preview
+  //  Test 3: saveSession delegates to SW via chrome.runtime.sendMessage
+  //  Fix C: saveSession 不再直接写 storage，而是发 save-session 消息到 SW
+  //  SW handler 在 SW 上下文完成合并 + LRU 淘汰（见 background.test.js）
   // ---------------------------------------------------------------
-  test('Test 3: saveSession stores messages with metadata to chrome.storage.local', async function () {
+  test('Test 3: saveSession delegates to SW via chrome.runtime.sendMessage', async function () {
     loadModules();
 
     expect(window.GobyAgent).toBeDefined();
@@ -159,16 +160,9 @@ describe('Session Persistence', function () {
     window.GobyAgent.createSession(origin);
 
     // Add some messages (simulate user interaction)
-    // Access internal state to push messages
-    var state = window.GobyAgent.getState();
-    // Actually, after createSession, state.messages should have system prompt + we can push user message
-    // We need to push messages for save to work with preview
-
-    // We'll work directly with the state
     var internalState = window.__gobyInternals && window.__gobyInternals._agentState;
     if (internalState) {
       // createSession already set system prompt
-      // Add a user message for preview
       internalState.messages.push({ role: 'user', content: '帮我搜索需求文档' });
       internalState.messages.push({ role: 'assistant', content: '好的，我来搜索' });
       internalState.activeOrigin = origin;
@@ -176,20 +170,21 @@ describe('Session Persistence', function () {
 
     await window.GobyAgent.saveSession();
 
-    // Check chrome.storage.local was written
-    expect(chrome.storage.local.set).toHaveBeenCalled();
+    // Fix C: saveSession 不再直接调 chrome.storage.local.set，
+    // 而是通过 chrome.runtime.sendMessage 转发到 SW
+    expect(chrome.runtime.sendMessage).toHaveBeenCalled();
 
-    // Find call with gobySessions key
-    var sessionCalls = chrome.storage.local.set.mock.calls.filter(function (call) {
-      return call[0] && call[0].gobySessions;
+    // 找到 save-session 调用
+    var saveCall = chrome.runtime.sendMessage.mock.calls.find(function (call) {
+      return call[0] && call[0].action === 'save-session';
     });
-    expect(sessionCalls.length).toBeGreaterThan(0);
+    expect(saveCall).toBeDefined();
 
-    var savedSessions = sessionCalls[0][0].gobySessions;
-    var sessionKeys = Object.keys(savedSessions);
-    expect(sessionKeys.length).toBeGreaterThan(0);
+    var payload = saveCall[0];
+    expect(payload.sessionId).toBeDefined();
+    expect(payload.sessionData).toBeDefined();
 
-    var saved = savedSessions[sessionKeys[0]];
+    var saved = payload.sessionData;
     expect(saved.origin).toBe(origin);
     expect(saved.title).toBeDefined();
     expect(saved.updatedAt).toBeGreaterThan(0);
@@ -619,6 +614,7 @@ describe('Session Sidebar UI', function () {
 
   // ---------------------------------------------------------------
   //  Test 14: Session preview = first user message first 30 chars
+  //  Fix C: preview 现在通过 sessionData 传给 SW（见 Test 3 验证路径）
   // ---------------------------------------------------------------
   test('Test 14: session preview shows first user message first 30 chars', async function () {
     loadModules();
@@ -643,12 +639,11 @@ describe('Session Sidebar UI', function () {
     await window.GobyAgent.saveSession();
 
     // Verify preview is first 30 chars of first user message
-    var result = await chrome.storage.local.get('gobySessions');
-    var sessions = result.gobySessions || {};
-    var keys = Object.keys(sessions);
-    expect(keys.length).toBeGreaterThan(0);
-
-    var saved = sessions[keys[0]];
-    expect(saved.preview).toBe('帮我搜索需求文档中关于合同管理的部分，我需要找到最新的合同模');
+    // Fix C: 通过 sendMessage 调用参数验证（saveSession 不再直接写 storage）
+    var saveCall = chrome.runtime.sendMessage.mock.calls.find(function (call) {
+      return call[0] && call[0].action === 'save-session';
+    });
+    expect(saveCall).toBeDefined();
+    expect(saveCall[0].sessionData.preview).toBe('帮我搜索需求文档中关于合同管理的部分，我需要找到最新的合同模');
   });
 });
