@@ -342,7 +342,7 @@ describe('Navigation SW Handlers', function () {
     expect(response).toContain('(https://example1.com) tabId=1');
     expect(response).toContain('Tab Two (https://example2.com) tabId=2');
     expect(response).toContain('无标题 (about:blank) tabId=3');
-    expect(chrome.tabs.query).toHaveBeenCalledWith({}, expect.any(Function));
+    expect(chrome.tabs.query).toHaveBeenCalledWith({ currentWindow: true }, expect.any(Function));
   });
 
   // ---------------------------------------------------------------

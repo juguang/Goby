@@ -622,9 +622,9 @@
       return true; // 异步响应
     }
 
-    // NAV-05, D-08: tab-list — chrome.tabs.query({})
+    // NAV-05, D-08: tab-list — chrome.tabs.query current window only
     if (message.action === 'tab-list') {
-      chrome.tabs.query({}, function (tabs) {
+      chrome.tabs.query({ currentWindow: true }, function (tabs) {
         var lines = tabs.map(function (t, i) {
           return (i + 1) + '. ' + (t.active ? '[active] ' : '') + (t.title || '无标题') + ' (' + (t.url || '') + ') tabId=' + t.id;
         });
