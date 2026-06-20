@@ -29,7 +29,7 @@
 | **A real tool-calling loop** | Streaming responses. Multi-step reasoning across chained tool calls. Up to 15 rounds per turn, 50 per session, 15 s per-tool timeout. |
 | **No backend, ever** | Everything runs in your browser. Your API key and your conversations never touch a Goby-controlled server. |
 | **Isolated by design** | Shadow DOM keeps the panel out of the page — and the page out of the panel. DOMPurify sanitizes every LLM payload; user input uses `textContent`, never `innerHTML`. |
-| **Read it in an afternoon** | ~4,700 lines of vanilla JS, no framework, no build step, no transpile. The whole runtime fits in your head. |
+| **Read it in an afternoon** | ~5,500 lines of vanilla JS, no framework, no build step, no transpile. The whole runtime fits in your head. |
 
 ## Preview
 
