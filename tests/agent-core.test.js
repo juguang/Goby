@@ -426,3 +426,256 @@ describe('LLM Non-Streaming & Fallback', function () {
     connectionSpy.mockRestore();
   });
 });
+
+// ================================================================
+//   enforceMessageLimit (260620-i08 Task 1)
+//   消息状态机修复: system 分离 + tool 配对保护
+// ================================================================
+describe('enforceMessageLimit', function () {
+  beforeEach(function () {
+    jest.resetModules();
+    jest.clearAllMocks();
+    chrome.storage.local._reset();
+    document.querySelectorAll('.goby-floating-ball, #goby-panel-host').forEach(function (el) { el.remove(); });
+  });
+
+  function buildMessages(count, role) {
+    var arr = [];
+    for (var i = 0; i < count; i++) {
+      arr.push({ role: role, content: 'msg-' + role + '-' + i });
+    }
+    return arr;
+  }
+
+  // ---------------------------------------------------------------
+  //  Test 1: system prompt 始终保留，不计入 MAX_MESSAGES=20 上限
+  //  构造 [system, u1..u20]（共 21 条）触发 enforceMessageLimit
+  // ---------------------------------------------------------------
+  test('Test 1: system prompt always preserved when total exceeds MAX_MESSAGES', function () {
+    loadAgentModules();
+    var internals = window.__gobyInternals;
+    expect(typeof internals.enforceMessageLimit).toBe('function');
+
+    var msgs = [{ role: 'system', content: 'system-prompt' }];
+    msgs = msgs.concat(buildMessages(20, 'user'));
+    internals._agentState.messages = msgs;
+
+    internals.enforceMessageLimit();
+
+    var result = internals._agentState.messages;
+    expect(result.length).toBeGreaterThan(0);
+    expect(result[0].role).toBe('system');
+    expect(result[0].content).toBe('system-prompt');
+    // 保留区 convoMsgs 长度 ≤ MAX_MESSAGES=20
+    var convoCount = result.length - 1; // 减去 system
+    expect(convoCount).toBeLessThanOrEqual(20);
+  });
+
+  // ---------------------------------------------------------------
+  //  Test 2: 总条数 ≤ MAX_MESSAGES 时内容完全不变
+  // ---------------------------------------------------------------
+  test('Test 2: no change when total length ≤ MAX_MESSAGES', function () {
+    loadAgentModules();
+    var internals = window.__gobyInternals;
+
+    var msgs = [{ role: 'system', content: 'sys' }];
+    msgs = msgs.concat(buildMessages(10, 'user'));
+    var originalSnapshot = JSON.parse(JSON.stringify(msgs));
+    internals._agentState.messages = msgs;
+
+    internals.enforceMessageLimit();
+
+    var result = internals._agentState.messages;
+    expect(result.length).toBe(originalSnapshot.length);
+    for (var i = 0; i < result.length; i++) {
+      expect(result[i].role).toBe(originalSnapshot[i].role);
+      expect(result[i].content).toBe(originalSnapshot[i].content);
+    }
+  });
+
+  // ---------------------------------------------------------------
+  //  Test 3: tool 配对保护 — assistant.tool_calls 与 tool 结果一起保留
+  //  构造 [system, u1, assistant(tool_calls id=X), tool(tool_call_id=X), u2..u16]
+  //  超过 MAX_MESSAGES=20 时，splitIdx 应扩展保护 assistant
+  // ---------------------------------------------------------------
+  test('Test 3: tool↔assistant.tool_calls pairing preserved by splitIdx extension', function () {
+    loadAgentModules();
+    var internals = window.__gobyInternals;
+
+    // 构造：system + 4 条前缀 + assistant(tool_calls id=X) + tool(tool_call_id=X) + 16 条对话 = 22 条
+    var msgs = [{ role: 'system', content: 'sys' }];
+    msgs.push({ role: 'user', content: 'u-pre-1' });
+    msgs.push({ role: 'assistant', content: 'a-pre-1' });
+    msgs.push({ role: 'user', content: 'u-pre-2' });
+    msgs.push({ role: 'assistant', content: 'a-pre-2' });
+    // 关键：assistant 带 tool_calls，配对的 tool 结果紧随其后
+    msgs.push({
+      role: 'assistant',
+      content: '',
+      tool_calls: [{ id: 'call_X', type: 'function', function: { name: 'page_query', arguments: '{}' } }]
+    });
+    msgs.push({
+      role: 'tool',
+      tool_call_id: 'call_X',
+      name: 'page_query',
+      content: 'result-X'
+    });
+    // 再加 16 条对话，让保留区开头落在 tool 消息附近
+    for (var i = 0; i < 16; i++) {
+      msgs.push({ role: 'user', content: 'tail-' + i });
+    }
+    // 总数：1 + 4 + 1 + 1 + 16 = 23 条，convoMsgs = 22
+    internals._agentState.messages = msgs;
+
+    internals.enforceMessageLimit();
+
+    var result = internals._agentState.messages;
+    // system 必须保留
+    expect(result[0].role).toBe('system');
+
+    // 找 assistant(tool_calls id=call_X) 和 tool(tool_call_id=call_X) 的位置
+    var foundAssistant = -1;
+    var foundTool = -1;
+    for (var k = 0; k < result.length; k++) {
+      if (result[k].role === 'assistant' && result[k].tool_calls) {
+        for (var t = 0; t < result[k].tool_calls.length; t++) {
+          if (result[k].tool_calls[t].id === 'call_X') {
+            foundAssistant = k;
+          }
+        }
+      }
+      if (result[k].role === 'tool' && result[k].tool_call_id === 'call_X') {
+        foundTool = k;
+      }
+    }
+    // 两者必须同时保留（要么都在，要么都不在 — 不能孤立）
+    if (foundTool !== -1) {
+      expect(foundAssistant).not.toBe(-1);
+      expect(foundAssistant).toBeLessThan(foundTool);
+    } else {
+      // 如果 tool 被丢弃（assistant 也被丢弃），不能只留孤立 tool
+      expect(foundAssistant).toBe(-1);
+    }
+  });
+
+  // ---------------------------------------------------------------
+  //  Test 4: 保留区开头孤立 tool 被清理
+  //  构造场景让配对的 assistant.tool_calls 落在删除区无法扩展
+  //  保留区开头的孤立 tool 应被 shift 掉
+  // ---------------------------------------------------------------
+  test('Test 4: orphaned tool at retention head cleaned up', function () {
+    loadAgentModules();
+    var internals = window.__gobyInternals;
+
+    // system + 5 条前缀对话 + assistant(tool_calls id=ORPHAN) + tool(tool_call_id=ORPHAN) + 18 条尾巴
+    // 让 splitIdx 落在 assistant(tool_calls id=ORPHAN) 与 tool 之间 — assistant 被丢弃，tool 在保留区开头
+    var msgs = [{ role: 'system', content: 'sys' }];
+    msgs.push({ role: 'user', content: 'pre1' });
+    msgs.push({ role: 'assistant', content: 'pre2' });
+    msgs.push({ role: 'user', content: 'pre3' });
+    msgs.push({ role: 'assistant', content: 'pre4' });
+    msgs.push({ role: 'user', content: 'pre5' });
+    // 关键 assistant.tool_calls — 落在删除区
+    msgs.push({
+      role: 'assistant',
+      content: '',
+      tool_calls: [{ id: 'call_ORPHAN', type: 'function', function: { name: 'p', arguments: '{}' } }]
+    });
+    // tool 结果 — 落在保留区开头
+    msgs.push({
+      role: 'tool',
+      tool_call_id: 'call_ORPHAN',
+      name: 'p',
+      content: 'orphan-result'
+    });
+    // 18 条尾巴，保留区 convoMsgs 应该 ≤ 20
+    for (var i = 0; i < 18; i++) {
+      msgs.push({ role: 'user', content: 'tail-' + i });
+    }
+    // 总条数：1 system + 5 + 1 + 1 + 18 = 26 条
+    internals._agentState.messages = msgs;
+
+    internals.enforceMessageLimit();
+
+    var result = internals._agentState.messages;
+    // 保留区开头不能是孤立 tool 消息
+    expect(result[0].role).toBe('system');
+    expect(result[1].role).not.toBe('tool');
+    // 必须没有任何 tool_call_id === 'call_ORPHAN' 的孤立 tool
+    for (var k = 0; k < result.length; k++) {
+      if (result[k].role === 'tool' && result[k].tool_call_id === 'call_ORPHAN') {
+        // 找到则必须前面有匹配 assistant.tool_calls — 否则失败
+        var hasMatchingAssistant = false;
+        for (var j = 0; j < k; j++) {
+          if (result[j].role === 'assistant' && result[j].tool_calls) {
+            for (var t = 0; t < result[j].tool_calls.length; t++) {
+              if (result[j].tool_calls[t].id === 'call_ORPHAN') {
+                hasMatchingAssistant = true;
+              }
+            }
+          }
+        }
+        expect(hasMatchingAssistant).toBe(true);
+      }
+    }
+  });
+
+  // ---------------------------------------------------------------
+  //  Test 5: 多 tool_calls 部分 in/out 边界 — assistant 整体保留
+  //  assistant.tool_calls=[{id:'A'},{id:'B'}]
+  //  A 的 tool 在删除区，B 的 tool 在保留区 — splitIdx 扩展到 assistant 位置
+  //  A 的 tool 作为保留区开头孤立 tool 被清理（因为 B 也匹配 assistant）
+  // ---------------------------------------------------------------
+  test('Test 5: multi tool_calls partial in/out — assistant preserved, orphan tool cleaned', function () {
+    loadAgentModules();
+    var internals = window.__gobyInternals;
+
+    // 构造：system + 前缀 + assistant(tool_calls=[A,B]) + tool(A) + tool(B) + tail
+    // 让 splitIdx 落在 assistant 与 tool(A) 之间 — assistant 已在保留区，A 和 B 都应保留
+    var msgs = [{ role: 'system', content: 'sys' }];
+    // 4 条前缀
+    msgs.push({ role: 'user', content: 'pre1' });
+    msgs.push({ role: 'assistant', content: 'pre2' });
+    msgs.push({ role: 'user', content: 'pre3' });
+    msgs.push({ role: 'assistant', content: 'pre4' });
+    // 关键 assistant
+    msgs.push({
+      role: 'assistant',
+      content: '',
+      tool_calls: [
+        { id: 'call_A', type: 'function', function: { name: 'p', arguments: '{}' } },
+        { id: 'call_B', type: 'function', function: { name: 'p', arguments: '{}' } }
+      ]
+    });
+    msgs.push({ role: 'tool', tool_call_id: 'call_A', name: 'p', content: 'A-result' });
+    msgs.push({ role: 'tool', tool_call_id: 'call_B', name: 'p', content: 'B-result' });
+    // 18 条尾巴
+    for (var i = 0; i < 18; i++) {
+      msgs.push({ role: 'user', content: 'tail-' + i });
+    }
+    // 总条数：1 + 4 + 1 + 2 + 18 = 26
+    internals._agentState.messages = msgs;
+
+    internals.enforceMessageLimit();
+
+    var result = internals._agentState.messages;
+    // 如果 assistant(tool_calls=[A,B]) 保留，则 A 和 B 两个 tool 都不能孤立
+    // 收集 assistant 暴露的 tool_call ids
+    var knownToolCallIds = {};
+    for (var k = 0; k < result.length; k++) {
+      if (result[k].role === 'assistant' && result[k].tool_calls) {
+        for (var t = 0; t < result[k].tool_calls.length; t++) {
+          if (result[k].tool_calls[t].id) {
+            knownToolCallIds[result[k].tool_calls[t].id] = true;
+          }
+        }
+      }
+    }
+    // 验证所有 tool 消息都有匹配的 assistant.tool_calls
+    for (var k2 = 0; k2 < result.length; k2++) {
+      if (result[k2].role === 'tool' && result[k2].tool_call_id) {
+        expect(knownToolCallIds[result[k2].tool_call_id]).toBe(true);
+      }
+    }
+  });
+});

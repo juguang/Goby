@@ -1622,14 +1622,87 @@
   // ================================================================
 
   /**
-   * enforceMessageLimit — 消息历史保留最近 MAX_MESSAGES 条
-   * 保留 system prompt（messages[0]）+ 最近 20 条用户/助手/工具消息
+   * enforceMessageLimit — 消息历史保留最近 MAX_MESSAGES 条对话消息
+   * 260620-i08 修复：分离 system prompt（不计入 20 条上限），保留区 tool↔assistant.tool_calls 配对保护，
+   * 清理保留区开头孤立 tool 消息（防止 API 报 HTTP 400 'tool must follow tool_calls'）。
+   *
+   * 实现参照 compactConversationAsync 已验证的配对保护逻辑（splitIdx 向前扩展）。
    */
   function enforceMessageLimit() {
-    if (_agentState.messages.length > MAX_MESSAGES) {
-      var excess = _agentState.messages.length - MAX_MESSAGES;
-      _agentState.messages.splice(0, excess);
+    var messages = _agentState.messages;
+    if (!messages || messages.length === 0) return;
+
+    // 1. 分离 system（仅 messages[0].role==='system' 进 systemMsgs）
+    var systemMsgs = [];
+    var convoMsgs = messages;
+    if (messages[0].role === 'system') {
+      systemMsgs = [messages[0]];
+      convoMsgs = messages.slice(1);
     }
+
+    // 2. 不超限直接返回
+    if (convoMsgs.length <= MAX_MESSAGES) {
+      return;
+    }
+
+    // 3. splitIdx = convoMsgs.length - MAX_MESSAGES
+    var splitIdx = convoMsgs.length - MAX_MESSAGES;
+
+    // 4. 向前扩展 splitIdx，保护保留区内每个 tool 消息对应的 assistant.tool_calls
+    //    若 tool 配对的 assistant 落在删除区（ai < splitIdx），扩展 splitIdx 到 ai
+    for (var si = splitIdx; si < convoMsgs.length; si++) {
+      var msg = convoMsgs[si];
+      if (msg.role === 'tool' && msg.tool_call_id) {
+        for (var ai = si - 1; ai >= 0; ai--) {
+          var prev = convoMsgs[ai];
+          if (prev.role === 'assistant' && prev.tool_calls) {
+            var tcs = Array.isArray(prev.tool_calls) ? prev.tool_calls : [];
+            for (var tci = 0; tci < tcs.length; tci++) {
+              if (tcs[tci].id === msg.tool_call_id && ai < splitIdx) {
+                splitIdx = ai;
+              }
+            }
+            break;
+          }
+        }
+      }
+    }
+
+    // 5. 切片保留区
+    convoMsgs = convoMsgs.slice(splitIdx);
+
+    // 6. 清理保留区开头孤立 tool（配对的 assistant.tool_calls 已不在保留区，无法扩展保护）
+    //    防御性兜底：连续从开头 shift 直到不再是孤立 tool
+    while (convoMsgs.length > 0) {
+      var first = convoMsgs[0];
+      if (first.role === 'tool' && first.tool_call_id) {
+        // 检查保留区内是否有匹配的 assistant.tool_calls
+        var hasMatch = false;
+        for (var mi = 0; mi < convoMsgs.length; mi++) {
+          var cand = convoMsgs[mi];
+          if (cand.role === 'assistant' && cand.tool_calls) {
+            var ctcs = Array.isArray(cand.tool_calls) ? cand.tool_calls : [];
+            for (var cti = 0; cti < ctcs.length; cti++) {
+              if (ctcs[cti].id === first.tool_call_id) {
+                hasMatch = true;
+                break;
+              }
+            }
+            if (hasMatch) break;
+          }
+        }
+        if (!hasMatch) {
+          convoMsgs.shift();
+        } else {
+          break;
+        }
+      } else {
+        break;
+      }
+    }
+
+    // 7. 重新组装
+    _agentState.messages = systemMsgs.concat(convoMsgs);
   }
 
   // ================================================================
@@ -2495,7 +2568,10 @@
     sessionIdForOrigin: sessionIdForOrigin,
     saveSession: saveSession,
     cleanupOldSessions: cleanupOldSessions,
-    getAllSessions: getAllSessions
+    getAllSessions: getAllSessions,
+    // 260620-i08: 暴露内部消息状态机函数供 jest 测试访问
+    enforceMessageLimit: enforceMessageLimit,
+    sanitizeMessages: sanitizeMessages
   };
 
   // 暴露 GobyAgent 到全局
