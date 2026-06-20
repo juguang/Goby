@@ -557,6 +557,82 @@
       return true; // 保持 sendResponse 异步通道开启
     }
 
+    // ============================================================
+    //  Phase 7: Tab Navigation Tools
+    // ============================================================
+
+    // NAV-01, D-04: tab-navigate — chrome.tabs.update 当前标签页
+    if (message.action === 'tab-navigate') {
+      if (!sender.tab) {
+        sendResponse('Error: 无法获取 tabId');
+        return true;
+      }
+      chrome.tabs.update(sender.tab.id, { url: message.url }, function () {
+        if (chrome.runtime.lastError) {
+          sendResponse('Error: 导航失败 - ' + chrome.runtime.lastError.message);
+        } else {
+          sendResponse('已导航到: ' + message.url);
+        }
+      });
+      return true; // 异步响应
+    }
+
+    // NAV-02, D-05, NAV-10: tab-open — chrome.tabs.create + onUpdated 等待 + 15s 超时
+    if (message.action === 'tab-open') {
+      chrome.tabs.create({ url: message.url, active: true }, function (tab) {
+        // 15s 超时保护
+        var timeoutId = setTimeout(function () {
+          sendResponse('Error: 标签页加载超时 - ' + message.url);
+        }, 15000);
+
+        // 注册 onUpdated 监听，等待 status === 'complete'
+        function onUpdated(tabId, changeInfo) {
+          if (tabId === tab.id && changeInfo.status === 'complete') {
+            chrome.tabs.onUpdated.removeListener(onUpdated);
+            clearTimeout(timeoutId);
+            sendResponse('已打开标签页: [' + tab.id + '] ' + (changeInfo.title || tab.title || '新标签页'));
+          }
+        }
+        chrome.tabs.onUpdated.addListener(onUpdated);
+      });
+      return true; // 异步响应
+    }
+
+    // NAV-03, D-06: tab-close — chrome.tabs.remove
+    if (message.action === 'tab-close') {
+      chrome.tabs.remove(message.tabId, function () {
+        if (chrome.runtime.lastError) {
+          sendResponse('Error: 关闭失败 - ' + chrome.runtime.lastError.message);
+        } else {
+          sendResponse('已关闭标签页: ' + message.tabId);
+        }
+      });
+      return true; // 异步响应
+    }
+
+    // NAV-04, D-07: tab-switch — chrome.tabs.update active:true
+    if (message.action === 'tab-switch') {
+      chrome.tabs.update(message.tabId, { active: true }, function (tab) {
+        if (chrome.runtime.lastError) {
+          sendResponse('Error: 切换失败 - ' + chrome.runtime.lastError.message);
+        } else {
+          sendResponse('已切换到标签页: ' + (tab.title || tab.id) + ' (tabId=' + tab.id + ')');
+        }
+      });
+      return true; // 异步响应
+    }
+
+    // NAV-05, D-08: tab-list — chrome.tabs.query({})
+    if (message.action === 'tab-list') {
+      chrome.tabs.query({}, function (tabs) {
+        var lines = tabs.map(function (t, i) {
+          return (i + 1) + '. ' + (t.active ? '[active] ' : '') + (t.title || '无标题') + ' (' + (t.url || '') + ') tabId=' + t.id;
+        });
+        sendResponse('当前有 ' + tabs.length + ' 个标签页:\n' + lines.join('\n'));
+      });
+      return true; // 异步响应
+    }
+
     return false;
   });
 
