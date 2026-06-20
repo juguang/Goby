@@ -41,6 +41,73 @@
       return false;
     }
 
+    // Phase 8 / NAV-08 / D-10: workflow-init — SW 注入工作 Tab 角色 + inherited 上下文
+    // 工作 Tab 是全新页面，没有 interrupted session 需要恢复；isWorkflowInit=true 等价
+    // 新 session 的第一次 processAgentMessage 调用（不复用 resume 标记，避免误触发续跑）
+    if (message.action === 'workflow-init') {
+      window.__gobyWorkflowId = message.workflow_id;
+      // push inherited messages（chat Tab 最后 5 条，让工作 Tab 有上下文）
+      if (Array.isArray(message.inherited_messages)) {
+        for (var ii = 0; ii < message.inherited_messages.length; ii++) {
+          _agentState.messages.push(message.inherited_messages[ii]);
+        }
+      }
+      // push initial user message（D-10：让 LLM 知道自己在工作 Tab 角色 + 任务目标）
+      if (message.initial_user_message) {
+        _agentState.messages.push({ role: 'user', content: message.initial_user_message });
+      }
+      // 自动启动 Agent 循环 — isWorkflowInit 路径不复用 resume（避免误触发 initSession resume）
+      // processAgentMessage 内识别 isWorkflowInit=true 时 push 角色 user message 路径
+      if (window.GobyAgent && typeof window.GobyAgent.processAgentMessage === 'function') {
+        window.GobyAgent.processAgentMessage(null, { isWorkflowInit: true });
+      }
+      return false;
+    }
+
+    // Phase 8 / NAV-08 / D-11: workflow_progress — 工作 Tab Agent 增量转发回 chat Tab
+    // Claude's Discretion 锁定：复用 GobyPanel.appendMessage('bot', ...) + badge 前缀
+    // 不引入新 panel.js 方法（保持轻量）；workflow_id badge 通过文本前缀 [W-xxxx] 实现
+    if (message.action === 'workflow_progress') {
+      var wfShort = (message.workflow_id || 'wf').slice(0, 8);
+      var progressContent = (message.data && message.data.content) || '';
+      if (window.GobyPanel && typeof window.GobyPanel.appendMessage === 'function') {
+        window.GobyPanel.appendMessage('bot', '[W-' + wfShort + '] ' + progressContent);
+      }
+      return false;
+    }
+
+    // Phase 8 / NAV-08 / D-15: workflow_complete — 工作 Tab 调 page_finish_workflow 后 SW 转发 summary
+    // chat Tab 把 summary 作为 user message 追加 + 以 resume 模式调 processAgentMessage 续跑
+    if (message.action === 'workflow_complete') {
+      var wcWfId = message.workflow_id;
+      var wcSummary = (message.data && message.data.summary) || '';
+      var fromWorkflowText = '[From workflow ' + wcWfId + '] ' + wcSummary;
+      _agentState.messages.push({ role: 'user', content: fromWorkflowText });
+      if (window.GobyPanel && typeof window.GobyPanel.appendMessage === 'function') {
+        window.GobyPanel.appendMessage('user', fromWorkflowText);
+      }
+      if (window.GobyAgent && typeof window.GobyAgent.processAgentMessage === 'function') {
+        window.GobyAgent.processAgentMessage(null, { resume: true, fromWorkflow: wcWfId });
+      }
+      return false;
+    }
+
+    // Phase 8 / NAV-08: workflow_error — 工作 Tab 报错或被关闭
+    // chat Tab push assistant 错误消息 + 恢复输入框（isProcessing=false）
+    if (message.action === 'workflow_error') {
+      var weWfId = message.workflow_id;
+      var weReason = (message.data && message.data.reason) || '未知错误';
+      var errMsg = '工作流 ' + weWfId + ' 失败: ' + weReason;
+      _agentState.messages.push({ role: 'assistant', content: errMsg });
+      if (window.GobyPanel && typeof window.GobyPanel.appendMessage === 'function') {
+        window.GobyPanel.appendMessage('bot', errMsg);
+      }
+      _agentState.isProcessing = false;
+      if (window.GobyPanel && window.GobyPanel._inputEl) window.GobyPanel._inputEl.disabled = false;
+      if (window.GobyPanel && window.GobyPanel._sendBtn) window.GobyPanel._sendBtn.disabled = false;
+      return false;
+    }
+
     return false;
   });
 
@@ -2615,10 +2682,15 @@
     // 用于跨 navigation 续跑（initSession 检测到 interrupted 后自动调起）
     var isResume = options && options.resume === true;
 
+    // Phase 8 / NAV-08 / D-09: isWorkflowInit 模式 — 工作 Tab 首次启动 Agent 循环
+    // workflow-init listener 已 push inherited + initial_user_message，本路径不再 push
+    // 任何消息，等价新 session 的第一次调用（避免重复 push 角色 user message）
+    var isWorkflowInit = options && options.isWorkflowInit === true;
+
     // 重置工具失败计数（跨轮次累计，但重置前需保留已有计数）
     // 注意：_toolCallFailCounts 保留，在 executeWithTimeout 中连续 3 次失败会跳过
 
-    if (!isResume) {
+    if (!isResume && !isWorkflowInit) {
       // 追加用户消息到消息历史（面板已由 panel.js 渲染）
       _agentState.messages.push({ role: 'user', content: userText });
 
