@@ -4,6 +4,9 @@
 (function () {
   'use strict';
 
+  // i18n 翻译函数引用
+  var t = window.GobyI18n ? window.GobyI18n.t : function (k, p) { return k; };
+
   var baseUrlInput = document.getElementById('baseUrl');
   var apiKeyInput = document.getElementById('apiKey');
   var modelInput = document.getElementById('model');
@@ -51,7 +54,7 @@
     if (names.length === 0) {
       var emptyOption = document.createElement('option');
       emptyOption.disabled = true;
-      emptyOption.textContent = '暂无配置';
+      emptyOption.textContent = t('popup.select_empty');
       profileSelect.appendChild(emptyOption);
     } else {
       names.forEach(function (name) {
@@ -120,9 +123,42 @@
   }
 
   /**
+   * 翻译 popup.html 静态文本元素（在 JS 逻辑之前执行）
+   */
+  function translatePopupUI() {
+    var titleEl = document.querySelector('.title');
+    if (titleEl) titleEl.textContent = t('popup.title');
+    var profileLabel = document.querySelector('.profile-header .profile-label');
+    if (profileLabel) profileLabel.textContent = t('popup.profile_label');
+    var emptyTitle = document.querySelector('.empty-title');
+    if (emptyTitle) emptyTitle.textContent = t('popup.empty_title');
+    var emptyBody = document.querySelector('.empty-body');
+    if (emptyBody) emptyBody.textContent = t('popup.empty_body');
+    var addBtn = document.getElementById('btn-add-profile');
+    if (addBtn) addBtn.title = t('popup.add_btn_title');
+    var editBtn = document.getElementById('btn-edit-profile');
+    if (editBtn) editBtn.title = t('popup.edit_btn_title');
+    var deleteBtn = document.getElementById('btn-delete-profile');
+    if (deleteBtn) deleteBtn.title = t('popup.delete_btn_title');
+    var saveBtnEl = document.getElementById('saveBtn');
+    if (saveBtnEl) saveBtnEl.textContent = t('popup.save_btn');
+    var toggleLabel = document.querySelector('.panel-toggle-label');
+    if (toggleLabel) toggleLabel.textContent = t('modal.autostart_label');
+    var eyeToggleEl = document.getElementById('eyeToggle');
+    if (eyeToggleEl) eyeToggleEl.title = t('popup.eye_toggle_title');
+    var baseUrlPlaceholder = document.getElementById('baseUrl');
+    if (baseUrlPlaceholder) baseUrlPlaceholder.placeholder = t('popup.placeholder_base_url');
+    var modelPlaceholder = document.getElementById('model');
+    if (modelPlaceholder) modelPlaceholder.placeholder = t('popup.placeholder_model');
+  }
+
+  /**
    * 初始化 — 加载 profiles 并填充 UI
    */
   function initPopup() {
+    // 先翻译静态 UI 文本
+    translatePopupUI();
+
     // 当前不阻塞 UI 加载
     var profilesPromise = GobyStorage.getProfiles();
     var activePromise = GobyStorage.getActiveProfile();
@@ -154,22 +190,22 @@
     GobyStorage.setActiveProfile(selectedName).then(function () {
       currentActiveProfile = selectedName;
       loadProfileForm(selectedName);
-      showToast('已切换到 ' + selectedName, 'success', 1500);
+      showToast(t('popup.toast_switch_success', { name: selectedName }), 'success', 1500);
     }).catch(function (err) {
-      showToast('切换失败: ' + (err.message || '未知错误'), 'error', 2000);
+      showToast(t('popup.toast_switch_fail', { msg: err.message || '未知错误' }), 'error', 2000);
     });
   });
 
   // ---- 添加 Profile ----
   btnAddProfile.addEventListener('click', function () {
-    var name = prompt('请输入新的 API 配置名称：');
+    var name = prompt(t('popup.toast_add_prompt'));
     if (!name || name.trim() === '') return;
 
     name = name.trim();
 
     // 检查是否已存在
     if (currentProfiles[name]) {
-      alert('配置名称已存在');
+      alert(t('modal.add_duplicate'));
       return;
     }
 
@@ -184,7 +220,7 @@
       // 聚焦 Base URL 以便用户立即填写
       baseUrlInput.focus();
     }).catch(function (err) {
-      showToast('添加失败: ' + (err.message || '未知错误'), 'error', 2000);
+      showToast(t('popup.toast_add_fail', { msg: err.message || '未知错误' }), 'error', 2000);
     });
   });
 
@@ -214,9 +250,9 @@
         apiKey: config.apiKey,
         model: config.model
       };
-      showToast('已保存', 'success', 2000);
+      showToast(t('popup.toast_save_success'), 'success', 2000);
     }).catch(function (err) {
-      showToast('保存失败: ' + (err.message || '未知错误'), 'error', 2000);
+      showToast(t('popup.toast_save_fail', { msg: err.message || '未知错误' }), 'error', 2000);
     });
   });
 
@@ -228,7 +264,7 @@
     loadProfileForm(selectedName);
     baseUrlInput.focus();
     baseUrlInput.select();
-    showToast('编辑「' + selectedName + '」', 'success', 1500);
+    showToast(t('modal.edit_hint', { name: selectedName }), 'success', 1500);
   });
 
   // ---- 删除 Profile ----
@@ -236,7 +272,7 @@
     var selectedName = profileSelect.value;
     if (!selectedName || !currentProfiles[selectedName]) return;
 
-    if (!confirm('确定删除「' + selectedName + '」吗？此操作不可撤销。')) {
+    if (!confirm(t('popup.toast_delete_confirm', { name: selectedName }))) {
       return;
     }
 
@@ -253,9 +289,9 @@
       }
 
       refreshUI();
-      showToast('已删除 ' + selectedName, 'error', 1500);
+      showToast(t('popup.toast_delete_success', { name: selectedName }), 'error', 1500);
     }).catch(function (err) {
-      showToast('删除失败: ' + (err.message || '未知错误'), 'error', 2000);
+      showToast(t('popup.toast_delete_fail', { msg: err.message || '未知错误' }), 'error', 2000);
     });
   });
 
@@ -285,7 +321,7 @@
         var panelState = result.gobyPanelState || {};
         panelState.autoStart = panelToggle.checked;
         chrome.storage.local.set({ gobyPanelState: panelState }, function () {
-          showToast(panelToggle.checked ? '已启用自动展开' : '已关闭自动展开', 'success', 1500);
+          showToast(panelToggle.checked ? t('popup.toast_auto_expand_on') : t('popup.toast_auto_expand_off'), 'success', 1500);
         });
       });
     });

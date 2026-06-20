@@ -5,6 +5,9 @@
 (function () {
   'use strict';
 
+  // i18n 翻译函数引用
+  var t = window.GobyI18n ? window.GobyI18n.t : function (k, p) { return k; };
+
   // ============================================================
   //  PANEL_CSS — Shadow DOM 内联样式
   //  宿主页面样式无法穿透 Shadow DOM 影响面板内部
@@ -470,7 +473,7 @@
 
     var ball = document.createElement('div');
     ball.className = 'goby-floating-ball';
-    ball.title = 'Goby AI 助手';
+    ball.title = t('panel.ball_tooltip');
 
     // 基本尺寸和定位（内联样式，确保 agent-panel.css 加载前可用）
     ball.style.width = '44px';
@@ -653,7 +656,7 @@
     var badge = document.createElement('div');
     badge.className = 'goby-tool-call-badge';
     badge.innerHTML = '<span class="goby-tool-name">' + name + '</span>'
-      + '<span class="goby-tool-status">处理中...</span>';
+      + '<span class="goby-tool-status">' + t('panel.tool_processing') + '</span>';
 
     wrapperDiv.appendChild(badge);
     _messagesContainer.appendChild(wrapperDiv);
@@ -803,7 +806,7 @@
 
     var title = document.createElement('span');
     title.className = 'goby-title';
-    title.textContent = 'Goby';
+    title.textContent = t('panel.goby_title');
 
     // 标题栏按钮容器
     var headerBtns = document.createElement('div');
@@ -813,14 +816,14 @@
     sessionBtn.id = 'goby-session-btn';
     sessionBtn.className = 'goby-header-btn';
     sessionBtn.textContent = '📋'; // 📋
-    sessionBtn.title = '会话列表';
+    sessionBtn.title = t('panel.session_btn_title');
     // Plan 03-03: toggleSessionSidebar wired below
 
     var settingsBtn = document.createElement('button');
     settingsBtn.id = 'goby-settings-btn';
     settingsBtn.className = 'goby-header-btn';
     settingsBtn.textContent = '⚙'; // ⚙
-    settingsBtn.title = '设置';
+    settingsBtn.title = t('panel.settings_btn_title');
     settingsBtn.addEventListener('click', function (e) {
       e.stopPropagation();
       if (typeof window.openSettingsModal === 'function') {
@@ -832,7 +835,7 @@
     closeBtn.id = 'goby-close-btn';
     closeBtn.className = 'goby-header-btn goby-close-btn';
     closeBtn.textContent = '—'; // —
-    closeBtn.title = '关闭面板';
+    closeBtn.title = t('panel.close_btn_title');
     closeBtn.addEventListener('click', function (e) {
       e.stopPropagation();
       GobyPanel.hide();
@@ -862,16 +865,25 @@
 
     var welcomeHeading = document.createElement('div');
     welcomeHeading.className = 'goby-welcome-heading';
-    welcomeHeading.textContent = '你好！我是 Goby';
+    welcomeHeading.textContent = t('panel.welcome_heading');
 
     var welcomeBody = document.createElement('div');
     welcomeBody.className = 'goby-welcome-body';
-    welcomeBody.textContent = '你的 AI 浏览器助手。我可以帮你填写表单、点击按钮、查询内容、分析页面...';
+    welcomeBody.textContent = t('panel.welcome_body');
 
     var welcomeTools = document.createElement('div');
     welcomeTools.className = 'goby-welcome-tools';
 
-    var toolLabels = ['填写表单', '点击按钮', '查询内容', '分析页面', '截取截图', '读写剪贴板', '数学计算', '获取时间'];
+    var toolLabels = [
+      t('panel.tool_fill_form'),
+      t('panel.tool_click_button'),
+      t('panel.tool_query_content'),
+      t('panel.tool_analyze_page'),
+      t('panel.tool_take_screenshot'),
+      t('panel.tool_read_write_clipboard'),
+      t('panel.tool_math_calc'),
+      t('panel.tool_get_time')
+    ];
     toolLabels.forEach(function (label) {
       var tag = document.createElement('div');
       tag.className = 'goby-welcome-tag';
@@ -893,7 +905,7 @@
 
     var inputEl = document.createElement('textarea');
     inputEl.className = 'goby-input-textarea';
-    inputEl.placeholder = '输入消息... (Enter 发送, Shift+Enter 换行)';
+    inputEl.placeholder = t('panel.input_placeholder');
     inputEl.rows = 1;
     // 内联样式确保 JSDOM 测试可以读取（同时 CSS class 提供相同约束）
     inputEl.style.minHeight = '40px';
@@ -903,7 +915,7 @@
     var sendBtn = document.createElement('button');
     sendBtn.className = 'goby-send-btn';
     sendBtn.textContent = '➤';
-    sendBtn.title = '发送消息';
+    sendBtn.title = t('panel.send_btn_title');
     // 内联样式确保 JSDOM 测试可读取
     sendBtn.style.background = 'linear-gradient(135deg, #667eea, #764ba2)';
 
@@ -919,7 +931,7 @@
 
     var statusModelEl = document.createElement('span');
     statusModelEl.className = 'goby-status-model';
-    statusModelEl.textContent = '加载中...';
+    statusModelEl.textContent = t('panel.status_loading');
 
     var statusDotEl = document.createElement('span');
     statusDotEl.className = 'goby-status-dot gray';
@@ -929,7 +941,7 @@
 
     var statusRoundEl = document.createElement('span');
     statusRoundEl.className = 'goby-status-round';
-    statusRoundEl.textContent = '第 0 轮';
+    statusRoundEl.textContent = t('panel.round_text', { n: 0 });
 
     statusBar.appendChild(statusLeft);
     statusBar.appendChild(statusRoundEl);
@@ -956,7 +968,7 @@
     var sidebarHeader = document.createElement('div');
     sidebarHeader.className = 'goby-sidebar-header';
     var sidebarTitle = document.createElement('span');
-    sidebarTitle.textContent = '会话列表';
+    sidebarTitle.textContent = t('panel.sidebar_title');
     var sidebarCloseBtn = document.createElement('button');
     sidebarCloseBtn.className = 'goby-sidebar-close-btn';
     sidebarCloseBtn.textContent = '×'; // ×
@@ -967,7 +979,7 @@
     sidebarSearch.className = 'goby-sidebar-search';
     var sidebarSearchInput = document.createElement('input');
     sidebarSearchInput.type = 'text';
-    sidebarSearchInput.placeholder = '搜索会话...';
+    sidebarSearchInput.placeholder = t('panel.sidebar_search_placeholder');
     var sidebarSearchIcon = document.createElement('span');
     sidebarSearchIcon.className = 'goby-search-icon';
     sidebarSearchIcon.textContent = '🔍'; // 🔍
@@ -981,10 +993,10 @@
     sidebarFooter.className = 'goby-sidebar-footer';
     var sidebarNewBtn = document.createElement('button');
     sidebarNewBtn.className = 'goby-sidebar-new-btn';
-    sidebarNewBtn.textContent = '+ 新建会话';
+    sidebarNewBtn.textContent = t('panel.sidebar_new_btn');
     var sidebarClearBtn = document.createElement('button');
     sidebarClearBtn.className = 'goby-sidebar-clear-btn';
-    sidebarClearBtn.textContent = '清除所有会话';
+    sidebarClearBtn.textContent = t('panel.sidebar_clear_btn');
     sidebarFooter.appendChild(sidebarNewBtn);
     sidebarFooter.appendChild(sidebarClearBtn);
 
@@ -1066,11 +1078,11 @@
     function formatTimeAgo(timestamp) {
       var now = Date.now();
       var diff = now - timestamp;
-      if (diff < 60000) return '刚刚';
-      if (diff < 3600000) return Math.floor(diff / 60000) + ' 分钟前';
-      if (diff < 86400000) return Math.floor(diff / 3600000) + ' 小时前';
+      if (diff < 60000) return t('panel.time_just_now');
+      if (diff < 3600000) return t('panel.time_minutes_ago', { n: Math.floor(diff / 60000) });
+      if (diff < 86400000) return t('panel.time_hours_ago', { n: Math.floor(diff / 3600000) });
       var days = Math.floor(diff / 86400000);
-      if (days < 30) return days + ' 天前';
+      if (days < 30) return t('panel.time_days_ago', { n: days });
       var date = new Date(timestamp);
       return date.getFullYear() + '-' + String(date.getMonth() + 1).padStart(2, '0') + '-' + String(date.getDate()).padStart(2, '0');
     }
@@ -1135,7 +1147,7 @@
 
           var metaEl = document.createElement('div');
           metaEl.className = 'goby-session-meta';
-          metaEl.textContent = (session.messageCount || 0) + ' 条消息 · ' + formatTimeAgo(session.updatedAt || Date.now());
+          metaEl.textContent = t('panel.messages_count', { n: session.messageCount || 0 }) + ' · ' + formatTimeAgo(session.updatedAt || Date.now());
 
           info.appendChild(originEl);
           info.appendChild(previewEl);
@@ -1165,7 +1177,7 @@
           deleteBtn.addEventListener('click', function (sid) {
             return function (e) {
               e.stopPropagation();
-              if (window.confirm('确定删除此会话？')) {
+              if (window.confirm(t('panel.delete_session_confirm'))) {
                 if (window.GobyAgent && typeof window.GobyAgent.deleteSession === 'function') {
                   window.GobyAgent.deleteSession(sid).then(function () {
                     _renderSessionList(sidebarSearchInput.value || '');
@@ -1208,7 +1220,7 @@
 
     // 清除全部按钮
     sidebarClearBtn.addEventListener('click', function () {
-      if (window.confirm('确定清除所有会话？')) {
+      if (window.confirm(t('panel.clear_all_confirm'))) {
         var agent = window.GobyAgent;
         if (agent && typeof agent.deleteAllSessions === 'function') {
           agent.deleteAllSessions().then(function () {
@@ -1415,7 +1427,7 @@
       _statusDotEl.className = 'goby-status-dot ' + opts.connectionStatus;
     }
     if (opts.roundCount !== undefined && _statusRoundEl) {
-      _statusRoundEl.textContent = '第 ' + opts.roundCount + ' 轮';
+      _statusRoundEl.textContent = t('panel.round_text', { n: opts.roundCount });
     }
   }
 
@@ -1445,7 +1457,7 @@
    */
   function updateRoundCount(count) {
     if (_statusRoundEl) {
-      _statusRoundEl.textContent = '第 ' + count + ' 轮';
+      _statusRoundEl.textContent = t('panel.round_text', { n: count });
     }
   }
 

@@ -7,6 +7,9 @@
 (function () {
   'use strict';
 
+  // i18n 翻译函数引用
+  var t = window.GobyI18n ? window.GobyI18n.t : function (k, p) { return k; };
+
   console.log('Goby content script loaded on:', window.location.hostname);
 
   // ---- Message Listener ----
@@ -295,9 +298,9 @@
     }
 
     GobyStorage.saveProfile(name, config).then(function () {
-      showModalFeedback('已保存', 'success');
+      showModalFeedback(t('modal.save_success'), 'success');
     }).catch(function (err) {
-      showModalFeedback('保存失败: ' + (err.message || '未知错误'), 'error');
+      showModalFeedback(t('modal.save_fail', { msg: err.message || '未知错误' }), 'error');
     });
   }
 
@@ -315,21 +318,21 @@
       baseUrlInput.focus();
       baseUrlInput.select();
     }
-    showModalFeedback('编辑「' + name + '」', 'success', 1500);
+    showModalFeedback(t('modal.edit_hint', { name: name }), 'success', 1500);
   }
 
   /**
    * 添加新 Profile
    */
   function addModalProfile() {
-    var name = prompt('请输入新的 API 配置名称：');
+    var name = prompt(t('modal.add_prompt'));
     if (!name || name.trim() === '') return;
     name = name.trim();
 
     // 检查名称是否已存在
     GobyStorage.getProfiles().then(function (profiles) {
       if (profiles[name]) {
-        alert('配置名称已存在');
+        alert(t('modal.add_duplicate'));
         return;
       }
       GobyStorage.saveProfile(name, { baseUrl: '', apiKey: '', model: '' }).then(function () {
@@ -343,7 +346,7 @@
         var baseUrlInput = document.getElementById('modal-baseUrl');
         if (baseUrlInput) baseUrlInput.focus();
       }).catch(function (err) {
-        showModalFeedback('添加失败: ' + (err.message || '未知错误'), 'error');
+        showModalFeedback(t('modal.add_fail', { msg: err.message || '未知错误' }), 'error');
       });
     });
   }
@@ -357,15 +360,15 @@
 
     var name = select.value;
 
-    if (!confirm('确定删除「' + name + '」吗？此操作不可撤销。')) {
+    if (!confirm(t('modal.delete_confirm', { name: name }))) {
       return;
     }
 
     GobyStorage.deleteProfile(name).then(function () {
       loadModalProfiles();
-      showModalFeedback('已删除 ' + name, 'error', 1500);
+      showModalFeedback(t('modal.delete_success', { name: name }), 'error', 1500);
     }).catch(function (err) {
-      showModalFeedback('删除失败: ' + (err.message || '未知错误'), 'error');
+      showModalFeedback(t('modal.delete_fail', { msg: err.message || '未知错误' }), 'error');
     });
   }
 
@@ -422,7 +425,7 @@
 
     var title = document.createElement('span');
     title.className = 'goby-modal-header-title';
-    title.textContent = '⚙ 设置';
+    title.textContent = t('modal.title');
 
     var closeBtn = document.createElement('button');
     closeBtn.className = 'goby-modal-close-btn';
@@ -443,7 +446,7 @@
 
     var profileLabel = document.createElement('span');
     profileLabel.className = 'profile-label';
-    profileLabel.textContent = 'API 配置';
+    profileLabel.textContent = t('modal.api_config_label');
 
     var profileSelect = document.createElement('select');
     profileSelect.className = 'goby-modal-profile-select';
@@ -455,17 +458,17 @@
     var addBtn = document.createElement('button');
     addBtn.className = 'goby-modal-btn';
     addBtn.textContent = '＋'; // ＋
-    addBtn.title = '添加配置';
+    addBtn.title = t('modal.add_btn_title');
 
     var editBtn = document.createElement('button');
     editBtn.className = 'goby-modal-btn';
     editBtn.textContent = '✎'; // ✎
-    editBtn.title = '编辑配置';
+    editBtn.title = t('modal.edit_btn_title');
 
     var deleteBtn = document.createElement('button');
     deleteBtn.className = 'goby-modal-btn delete-btn';
     deleteBtn.textContent = '✕'; // ✕
-    deleteBtn.title = '删除配置';
+    deleteBtn.title = t('modal.delete_btn_title');
 
     btnGroup.appendChild(addBtn);
     btnGroup.appendChild(editBtn);
@@ -486,7 +489,7 @@
     autoCheckRow.className = 'panel-toggle-row';
     var autoCheckLabel = document.createElement('span');
     autoCheckLabel.className = 'panel-toggle-label';
-    autoCheckLabel.textContent = '启动时自动展开面板';
+    autoCheckLabel.textContent = t('modal.autostart_label');
     var autoCheckSwitch = document.createElement('label');
     autoCheckSwitch.className = 'toggle-switch';
     var autoCheckInput = document.createElement('input');
@@ -504,14 +507,40 @@
     var httpsWarning = document.createElement('div');
     httpsWarning.className = 'goby-https-warning hidden';
     httpsWarning.id = 'modal-https-warning';
-    httpsWarning.textContent = '您的 API Key 将通过非加密连接传输，建议使用 HTTPS 地址';
+    httpsWarning.textContent = t('modal.https_warning');
     body.appendChild(httpsWarning);
+
+    // ---- 语言选择行 ----
+    var langRow = document.createElement('div');
+    langRow.className = 'panel-toggle-row';
+    var langLabel = document.createElement('span');
+    langLabel.className = 'panel-toggle-label';
+    langLabel.textContent = t('modal.language_label');
+    var langSelect = document.createElement('select');
+    langSelect.id = 'goby-lang-select';
+    langSelect.style.cssText = 'padding:4px 8px;border:1px solid #d1d5db;border-radius:4px;font-size:13px;';
+    var optZh = document.createElement('option');
+    optZh.value = 'zh'; optZh.textContent = t('modal.lang_zh');
+    var optEn = document.createElement('option');
+    optEn.value = 'en'; optEn.textContent = t('modal.lang_en');
+    optZh.selected = window.GobyI18n.getLocale() === 'zh';
+    optEn.selected = window.GobyI18n.getLocale() === 'en';
+    langSelect.appendChild(optZh);
+    langSelect.appendChild(optEn);
+    langRow.appendChild(langLabel);
+    langRow.appendChild(langSelect);
+    body.appendChild(langRow);
+    // 切换事件
+    langSelect.addEventListener('change', function () {
+      window.GobyI18n.setLocale(this.value);
+      showModalFeedback(t('modal.lang_switch_msg'), 'success', 3000);
+    });
 
     // Save button
     var saveBtn = document.createElement('button');
     saveBtn.className = 'goby-modal-save-btn';
     saveBtn.id = 'modal-save-btn';
-    saveBtn.textContent = '保存配置';
+    saveBtn.textContent = t('modal.save_btn');
     body.appendChild(saveBtn);
 
     // Save status
@@ -1444,10 +1473,18 @@
   ];
 
   // 动态拼接 SYSTEM_PROMPT 的可用工具列表 — 与 nativeTools 数组完全同步，避免漂移
+  // 工具列表行（由 getSystemPrompt 动态追加，不污染常量）
   var toolListLines = nativeTools.map(function (t) {
     return '- ' + t.function.name + ': ' + t.function.description;
   }).join('\n');
-  SYSTEM_PROMPT += '可用工具：\n' + toolListLines + '\n';
+
+  /**
+   * getSystemPrompt — 返回完整系统提示词（当前语言的 base + 工具列表）
+   * @returns {string}
+   */
+  function getSystemPrompt() {
+    return window.GobyI18n.getSystemPrompt() + toolListLines + '\n';
+  }
 
   /**
    * renderMarkdown — 安全渲染管道 (SEC-01, D-20/D-21/D-22)
@@ -1856,7 +1893,7 @@
   function createSession(origin) {
     var sessionId = sessionIdForOrigin(origin) + '_' + Date.now();
 
-    _agentState.messages = [{ role: 'system', content: SYSTEM_PROMPT }];
+    _agentState.messages = [{ role: 'system', content: getSystemPrompt() }];
     _agentState.sessionId = sessionId;
     _agentState.activeOrigin = origin;
 
@@ -2241,7 +2278,7 @@
       try {
         args = JSON.parse(args);
       } catch (e) {
-        return 'Error: 工具参数解析失败';
+        return t('tool.parse_error');
       }
     }
 
@@ -2256,14 +2293,14 @@
       }).join(', ');
       // 使用 UnknownTool: 前缀（区别于 Error:），让 executeWithTimeout 能识别"未知工具"
       // 并跳过重试 — 重试永远是相同结果，留更多预算给真正的工具错误
-      return 'UnknownTool: 未知工具 "' + toolCall.function.name + '"。可用工具: ' + availableTools;
+      return t('tool.unknown_tool', { name: toolCall.function.name, tools: availableTools });
     }
 
     try {
       var result = toolDef.execute(args);
       return result;
     } catch (e) {
-      return 'Error: ' + (e.message || '执行失败');
+      return t('tool.execute_fail', { msg: e.message || t('tool.execute_fail_default') });
     }
   }
 
@@ -2294,7 +2331,7 @@
       var attemptLoop = function (attempt) {
         if (attempt >= maxRetries) {
           // 所有重试均失败 — 返回跳过消息
-          resolve('已跳过（连续失败' + maxRetries + '次）');
+          resolve(t('tool.skipped', { n: maxRetries }));
           return;
         }
 
@@ -2306,7 +2343,7 @@
           }),
           new Promise(function (_, reject) {
             timeoutId = setTimeout(function () {
-              reject(new Error('工具执行超时（' + (timeout / 1000) + '秒）'));
+              reject(new Error(t('tool.timeout', { n: timeout / 1000 })));
             }, timeout);
           })
         ]).then(function (result) {
@@ -2413,7 +2450,7 @@
 
       // 构建完整消息数组（含 system prompt）
       var messages = [
-        { role: 'system', content: SYSTEM_PROMPT }
+        { role: 'system', content: getSystemPrompt() }
       ].concat(_agentState.messages);
 
       // 检查 token 限制
@@ -2425,7 +2462,7 @@
         await compactConversationAsync();
         // 压缩后重新构建消息
         messages = [
-          { role: 'system', content: SYSTEM_PROMPT }
+          { role: 'system', content: getSystemPrompt() }
         ].concat(_agentState.messages);
       }
 
@@ -2473,7 +2510,7 @@
             results.push({
               tool_call_id: tc.id || '',
               name: tc.function.name || '',
-              content: 'Error: 会话工具调用次数已达上限（' + MAX_TOOL_CALLS + '次），请新建会话继续操作'
+              content: t('tool.max_calls', { n: MAX_TOOL_CALLS })
             });
             break;
           }
@@ -2683,7 +2720,7 @@
     nativeTools: nativeTools,
     estimateTokens: estimateTokens,
     compactConversationAsync: compactConversationAsync,
-    SYSTEM_PROMPT: SYSTEM_PROMPT,
+    getSystemPrompt: getSystemPrompt,
     MAX_LOOPS: MAX_LOOPS,
     // Session management (Plan 03-03)
     sessionIdForOrigin: sessionIdForOrigin,
@@ -2709,6 +2746,12 @@
       };
     }
   };
+
+  // 向后兼容：SYSTEM_PROMPT 属性作为 getter 返回当前语言版本
+  Object.defineProperty(window.GobyAgent, 'SYSTEM_PROMPT', {
+    get: function () { return getSystemPrompt(); },
+    configurable: true
+  });
 
   // ---- Plan 03-03: 会话初始化 + URL 变化监听 ----
   // Phase 03 UAT 测试 5：initSession 由 GobyPanel.init().then() 触发（不再立即调用）
