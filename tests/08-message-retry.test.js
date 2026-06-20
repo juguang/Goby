@@ -20,6 +20,7 @@ var getOnMessageListener = helpers.getOnMessageListener;
 describe('sendToTabWithRetry (Phase 8 Plan 03 Task 1)', function () {
   beforeEach(function () {
     jest.resetModules();
+    jest.useFakeTimers();
     chrome.storage.local._reset();
     chrome.tabs.sendMessage.mockClear();
     chrome.runtime.lastError = null;
@@ -34,6 +35,7 @@ describe('sendToTabWithRetry (Phase 8 Plan 03 Task 1)', function () {
   });
 
   afterEach(function () {
+    jest.useRealTimers();
     jest.restoreAllMocks();
   });
 
@@ -48,15 +50,18 @@ describe('sendToTabWithRetry (Phase 8 Plan 03 Task 1)', function () {
     var calls = chrome.tabs.onUpdated.addListener.mock.calls;
     var onUpdated = calls[calls.length - 1][0];
     onUpdated(99, { status: 'complete' }, { id: 99, title: 'Worker' });
-    // 提取 workflowId
     var match = String(resp || '').match(/wf_[a-f0-9]{8}/);
     return match ? match[0] : null;
   }
 
-  // 辅助：flush microtasks + setTimeout (200ms retry)
+  // 辅助：flush microtasks + advance fake timers (200ms retry)
   function flushTimers() {
+    // 多次 advance 让 setTimeout 重试链跑完
+    for (var i = 0; i < 5; i++) {
+      jest.advanceTimersByTime(250);
+    }
     var p = Promise.resolve();
-    for (var i = 0; i < 15; i++) p = p.then(function () {});
+    for (var j = 0; j < 15; j++) p = p.then(function () {});
     return p;
   }
 
@@ -80,8 +85,6 @@ describe('sendToTabWithRetry (Phase 8 Plan 03 Task 1)', function () {
       fireWorkflowProgress(listener, wfId);
       return flushTimers();
     }).then(function () {
-      // 测试运行 Plan 03 Task 2 完成后会经 sendToTabWithRetry 转发；
-      // 首次成功（默认实现 callback() 即无 lastError）→ 只调 1 次
       var forwardCalls = chrome.tabs.sendMessage.mock.calls.filter(function (args) {
         return args[1] && args[1].action === 'workflow_progress';
       });
@@ -99,13 +102,9 @@ describe('sendToTabWithRetry (Phase 8 Plan 03 Task 1)', function () {
       chrome.tabs.sendMessage.mockImplementation(function (tabId, msg, cb) {
         callCount++;
         if (callCount < 3) {
-          // 前 2 次返回 'Receiving end does not exist' 错误
           chrome.runtime.lastError = { message: 'Receiving end does not exist' };
           if (typeof cb === 'function') cb();
-          // 调用后立即清除 lastError，让后续读 lastError 时不被污染
-          // 注：helper 在回调里读 lastError，所以这里设的值会被读到
         } else {
-          // 第 3 次成功
           chrome.runtime.lastError = null;
           if (typeof cb === 'function') cb();
         }
@@ -118,7 +117,6 @@ describe('sendToTabWithRetry (Phase 8 Plan 03 Task 1)', function () {
       var forwardCalls = chrome.tabs.sendMessage.mock.calls.filter(function (args) {
         return args[1] && args[1].action === 'workflow_progress';
       });
-      // 重试 2 次后成功 → 总调用 3 次
       expect(forwardCalls.length).toBe(3);
       chrome.runtime.lastError = null;
     });
@@ -142,9 +140,8 @@ describe('sendToTabWithRetry (Phase 8 Plan 03 Task 1)', function () {
       var forwardCalls = chrome.tabs.sendMessage.mock.calls.filter(function (args) {
         return args[1] && args[1].action === 'workflow_progress';
       });
-      // maxRetries=3 时，共尝试 4 次（初始 + 3 次重试）— 但 Plan 02 实现 attempt(maxRetries) 第一次是 maxRetries=3
-      // 实际：初始尝试 + 重试 maxRetries-1 次（最后一次 retriesLeft=0 不再重试）
-      // 测试期望 ≥ 3 次（helper 至少重试到 maxRetries 上限）
+      // maxRetries=3 → attempt(3)：调用 1 + 重试 2 = 3 次（最后一次 retriesLeft=0 不重试）
+      // 测试容忍 3 或 4 次（helper 实现可能边界处理略有差异，但需 ≥ 3）
       expect(forwardCalls.length).toBeGreaterThanOrEqual(3);
       chrome.runtime.lastError = null;
     });
@@ -157,7 +154,6 @@ describe('sendToTabWithRetry (Phase 8 Plan 03 Task 1)', function () {
 
     return flushTimers().then(function () {
       chrome.tabs.sendMessage.mockImplementation(function (tabId, msg, cb) {
-        // 其他错误（非 'Receiving end does not exist'）— 不应触发重试
         chrome.runtime.lastError = { message: 'Some other chrome runtime error' };
         if (typeof cb === 'function') cb();
       });
@@ -169,7 +165,6 @@ describe('sendToTabWithRetry (Phase 8 Plan 03 Task 1)', function () {
       var forwardCalls = chrome.tabs.sendMessage.mock.calls.filter(function (args) {
         return args[1] && args[1].action === 'workflow_progress';
       });
-      // 非 'Receiving end' 错误 → 不重试
       expect(forwardCalls.length).toBe(1);
       chrome.runtime.lastError = null;
     });

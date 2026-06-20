@@ -798,21 +798,76 @@
     }
 
     // ============================================================
-    //  Phase 8 / NAV-07: 跨 Tab 工作流消息中继
+    //  Phase 8 / NAV-07 / NAV-08: 跨 Tab 工作流消息中继
+    //  D-08: 三种消息类型 workflow_progress / workflow_complete / workflow_error
+    //        由工作 Tab Agent 经 SW 转发回 chat Tab
     // ============================================================
 
     // workflow-progress: 工作 Tab → SW → chat Tab 转发
-    // SW 查 _activeWorkflows 找到 chatTabId 转发；workflowId 不在映射中
-    // 时静默降级（可能是 SW restart race 或测试环境）
+    // T-08-08: 防 spoofing — sender.tab.id 必须匹配 _activeWorkflows[wfId].workerTabId
+    // SW 查 _activeWorkflows 找到 chatTabId 后经 sendToTabWithRetry 转发
+    // （Pitfall 4 防御：CS 未就绪时 200ms × maxRetries 重试）
     if (message.action === 'workflow-progress') {
       var wfId = message.workflow_id;
-      var entry = (wfId && _activeWorkflows[wfId]) || null;
-      if (entry && typeof entry.chatTabId === 'number') {
-        chrome.tabs.sendMessage(entry.chatTabId, message);
+      var wfEntry = (wfId && _activeWorkflows[wfId]) || null;
+      if (!wfEntry) {
+        // 静默降级 — workflowId 不在映射（可能是 SW restart race 或测试环境）
+        sendResponse({ ok: true });
+        return false;
       }
-      // 静默 ack — 不阻塞工作 Tab
-      sendResponse({ ok: true });
-      return false;
+      // 防伪造：sender.tab.id 必须是 workerTabId
+      if (!sender.tab || sender.tab.id !== wfEntry.workerTabId) {
+        sendResponse({ ok: false, error: 'sender 不匹配 workflow workerTabId' });
+        return false;
+      }
+      // 经 sendToTabWithRetry 转发 — 重试 3 次（CS 未就绪场景）
+      sendToTabWithRetry(wfEntry.chatTabId, {
+        action: 'workflow_progress',
+        workflow_id: wfId,
+        data: message.data
+      }, 3).then(function () {
+        sendResponse({ ok: true });
+      }).catch(function () {
+        sendResponse({ ok: false, error: '转发失败' });
+      });
+      return true; // 异步响应 — 保持 sendResponse 通道
+    }
+
+    // page-finish-workflow: 工作 Tab Agent 调 page_finish_workflow 工具 → SW 中转
+    // T-08-09: 防 spoofing — sender.tab.id 必须匹配 workerTabId
+    // D-14/D-15: SW 转发 summary 给 chat Tab + 同步 delete _activeWorkflows[wfId]
+    // Claude's Discretion 锁定：complete 时同步清 active_workflows（不留垃圾）
+    if (message.action === 'page-finish-workflow') {
+      var pfWfId = message.workflow_id;
+      var pfEntry = (pfWfId && _activeWorkflows[pfWfId]) || null;
+      if (!pfEntry) {
+        sendResponse({ ok: false, error: '未找到 workflow ' + pfWfId });
+        return false;
+      }
+      // 防伪造：sender.tab.id 必须是 workerTabId
+      if (!sender.tab || sender.tab.id !== pfEntry.workerTabId) {
+        sendResponse({ ok: false, error: 'sender 不匹配 workflow workerTabId' });
+        return false;
+      }
+      var chatTabId = pfEntry.chatTabId;
+      // 同步清理 active_workflows — Claude's Discretion 锁定 complete 时同步清
+      updateActiveWorkflows(function (workflows) {
+        delete workflows[pfWfId];
+      }).then(function () {
+        return sendToTabWithRetry(chatTabId, {
+          action: 'workflow_complete',
+          workflow_id: pfWfId,
+          data: {
+            summary: message.summary,
+            finalTabId: sender.tab.id
+          }
+        }, 3);
+      }).then(function () {
+        sendResponse('已结束 workflow ' + pfWfId);
+      }).catch(function (err) {
+        sendResponse('Error: 结束 workflow 失败 - ' + (err && err.message || err));
+      });
+      return true; // 异步响应
     }
 
     return false;
