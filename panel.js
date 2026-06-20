@@ -1019,7 +1019,7 @@
     overlayEl.appendChild(overlayCloseBtn);
     overlayImgContainer.appendChild(overlayImg);
     overlayEl.appendChild(overlayImgContainer);
-    panel.appendChild(overlayEl);
+    shadow.appendChild(overlayEl);
 
     // 存储遮罩 DOM 引用
     _overlayEl = overlayEl;
