@@ -73,12 +73,14 @@ describe('workflow UUID generation (Phase 8 Plan 02)', function () {
     expect(typeof resp).toBe('string');
     expect(resp).toMatch(/workflow: wf_12ab3f45/);
 
-    // storage 中也应记录同 workflow_id
-    expect(chrome.storage.local._raw.active_workflows).toBeTruthy();
-    var keys = Object.keys(chrome.storage.local._raw.active_workflows);
-    expect(keys).toContain('wf_12ab3f45');
-    // 整体 key 格式校验
-    expect(keys[0]).toMatch(/^wf_[a-f0-9]{8}$/);
+    // storage 中也应记录同 workflow_id（updateActiveWorkflows 是 Promise 链，flush）
+    return Promise.resolve().then().then().then().then().then(function () {
+      expect(chrome.storage.local._raw.active_workflows).toBeTruthy();
+      var keys = Object.keys(chrome.storage.local._raw.active_workflows);
+      expect(keys).toContain('wf_12ab3f45');
+      // 整体 key 格式校验
+      expect(keys[0]).toMatch(/^wf_[a-f0-9]{8}$/);
+    });
   });
 
   test('test 4: 连续 2 次 tab-open 调用生成不同 workflow_id', function () {
@@ -135,10 +137,12 @@ describe('workflow UUID generation (Phase 8 Plan 02)', function () {
     expect(id2).toMatch(/^wf_[a-f0-9]{8}$/);
     expect(id1).not.toBe(id2);
 
-    // storage 中应同时存在两条记录
-    var stored = chrome.storage.local._raw.active_workflows || {};
-    expect(stored[id1]).toBeTruthy();
-    expect(stored[id2]).toBeTruthy();
+    // storage 中应同时存在两条记录（flush updateActiveWorkflows Promise 链）
+    return Promise.resolve().then().then().then().then().then().then().then(function () {
+      var stored = chrome.storage.local._raw.active_workflows || {};
+      expect(stored[id1]).toBeTruthy();
+      expect(stored[id2]).toBeTruthy();
+    });
   });
 
   test('test 5: crypto.randomUUID 缺失时 fallback 到 Date.now+Math.random（仍以 wf_ 开头）', function () {
@@ -147,7 +151,7 @@ describe('workflow UUID generation (Phase 8 Plan 02)', function () {
     var savedUuid = global.crypto.randomUUID;
     delete global.crypto.randomUUID;
 
-    try {
+    return Promise.resolve().then().then().then().then().then(function () {
       loadBackground();
       var listener = getOnMessageListener();
 
@@ -160,10 +164,13 @@ describe('workflow UUID generation (Phase 8 Plan 02)', function () {
       expect(m[1].indexOf('wf_')).toBe(0);
 
       // storage 中也含该 key（可能不是 8 hex，但仍是 wf_ 前缀）
-      var keys = Object.keys(chrome.storage.local._raw.active_workflows || {});
-      expect(keys.some(function (k) { return k.indexOf('wf_') === 0; })).toBe(true);
-    } finally {
-      global.crypto.randomUUID = savedUuid;
-    }
+      return Promise.resolve().then().then().then().then().then().then(function () {
+        var keys = Object.keys(chrome.storage.local._raw.active_workflows || {});
+        expect(keys.some(function (k) { return k.indexOf('wf_') === 0; })).toBe(true);
+
+        // 恢复 crypto.randomUUID
+        if (savedUuid !== undefined) global.crypto.randomUUID = savedUuid;
+      });
+    });
   });
 });

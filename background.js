@@ -455,6 +455,99 @@
   }
 
   // ============================================================
+  //  Phase 8 / NAV-07 / D-06: active_workflows 注册机制（必须在 onMessage
+  //  listener 之前声明，让 listener 内的 handler 能通过函数 hoisting 访问）
+  //
+  //  _activeWorkflows 内存映射（workflowId → 完整 entry），所有 SW handler
+  //  通过闭包访问。MV3 SW idle kill 后内存丢失，必须从 storage 同步恢复
+  //  （应对 RESEARCH.md Pitfall 1）。
+  //
+  //  存储串行化：所有 read-modify-write 通过 updateActiveWorkflows(mutator)
+  //  排队执行（_workflowStorageLock Promise 链），避免并发覆盖（T-08-01）。
+  // ============================================================
+
+  // 内存映射 — workflowId → { workflowId, chatTabId, workerTabId, chatOrigin, workerOrigin, startedAt, status }
+  var _activeWorkflows = {};
+
+  // 写入串行化锁 — 所有 mutator 在此 Promise 链上排队
+  var _workflowStorageLock = Promise.resolve();
+
+  // SW 启动时从 storage 恢复内存映射（同步触发的 top-level 代码）
+  // 失败时（测试环境 / storage 异常）静默降级，_activeWorkflows 保持空对象
+  chrome.storage.local.get('active_workflows').then(function (result) {
+    if (result && result.active_workflows && typeof result.active_workflows === 'object') {
+      _activeWorkflows = result.active_workflows;
+    } else {
+      _activeWorkflows = {};
+    }
+  }).catch(function () {
+    // storage 读取失败 — 静默降级，保持空映射（不影响后续 handler）
+    _activeWorkflows = {};
+  });
+
+  /**
+   * 串行化更新 _activeWorkflows 并写回 storage。
+   * 所有 read-modify-write 操作必须经此 helper，避免并发覆盖（T-08-01 mitigation）。
+   *
+   * @param {function(object)} mutator - 操作 _activeWorkflows（如 set/delete key）
+   * @returns {Promise<void>}
+   */
+  function updateActiveWorkflows(mutator) {
+    _workflowStorageLock = _workflowStorageLock.then(function () {
+      try {
+        if (typeof mutator === 'function') {
+          mutator(_activeWorkflows);
+        }
+      } catch (e) {
+        // mutator 抛错不影响后续排队
+      }
+      return chrome.storage.local.set({ active_workflows: _activeWorkflows });
+    }).catch(function () {
+      // 写入失败 — 静默降级，保持锁链不中断
+    });
+    return _workflowStorageLock;
+  }
+
+  /**
+   * 向 worker Tab 发消息，遇到 'Receiving end does not exist' 时重试
+   * （CS 未就绪场景，Pitfall 4 防御）。maxRetries 默认 3 次，间隔 200ms。
+   *
+   * @param {number} tabId
+   * @param {object} message
+   * @param {number} [maxRetries=3]
+   * @returns {Promise<void>}
+   */
+  function sendToTabWithRetry(tabId, message, maxRetries) {
+    if (typeof maxRetries !== 'number' || maxRetries < 0) maxRetries = 3;
+    return new Promise(function (resolve) {
+      function attempt(retriesLeft) {
+        try {
+          chrome.tabs.sendMessage(tabId, message, function () {
+            var lastError = chrome.runtime.lastError;
+            if (lastError && lastError.message &&
+                lastError.message.indexOf('Receiving end does not exist') >= 0 &&
+                retriesLeft > 0) {
+              // CS 尚未就绪 — 延迟 200ms 重试
+              setTimeout(function () { attempt(retriesLeft - 1); }, 200);
+            } else {
+              // 成功或重试耗尽 — 静默 resolve
+              resolve();
+            }
+          });
+        } catch (e) {
+          // sendMessage 抛错（极端情况）— 重试或放弃
+          if (retriesLeft > 0) {
+            setTimeout(function () { attempt(retriesLeft - 1); }, 200);
+          } else {
+            resolve();
+          }
+        }
+      }
+      attempt(maxRetries);
+    });
+  }
+
+  // ============================================================
   //  消息路由
   // ============================================================
 
@@ -603,8 +696,24 @@
       return true; // 异步响应
     }
 
-    // NAV-02, D-05, NAV-10: tab-open — chrome.tabs.create + onUpdated 等待 + 15s 超时
+    // NAV-02, D-05, NAV-10, Phase 8/NAV-07/D-06: tab-open — chrome.tabs.create
+    //   + onUpdated 等待 + 15s 超时 + workflow 注册（UUID + active_workflows + workflow-init 注入）
     if (message.action === 'tab-open') {
+      // Phase 8 / NAV-07 / D-05: 生成 workflow UUID（8 hex 字符，wf_ 前缀）
+      // SW secure context 始终可用 crypto.randomUUID；HTTP 页面（Pitfall 6）fallback 到
+      // Date.now + Math.random — fallback 路径仍保证 wf_ 前缀
+      var workflowId = 'wf_';
+      try {
+        if (typeof crypto !== 'undefined' && typeof crypto.randomUUID === 'function') {
+          workflowId += crypto.randomUUID().slice(0, 8);
+        } else {
+          workflowId += Date.now().toString(36) + Math.random().toString(36).slice(2, 6);
+        }
+      } catch (e) {
+        // crypto 抛错（极端情况）— fallback 路径
+        workflowId = 'wf_' + Date.now().toString(36) + Math.random().toString(36).slice(2, 6);
+      }
+
       chrome.tabs.create({ url: message.url, active: true }, function (tab) {
         // 15s 超时保护
         var timeoutId = setTimeout(function () {
@@ -616,7 +725,36 @@
           if (tabId === tab.id && changeInfo.status === 'complete') {
             chrome.tabs.onUpdated.removeListener(onUpdated);
             clearTimeout(timeoutId);
-            sendResponse('已打开标签页: [' + tab.id + '] ' + (changeInfo.title || tab.title || '新标签页'));
+
+            // Phase 8 / NAV-07 / D-06: 注册 active_workflows 映射
+            // sender.tab.id = chat Tab，tab.id = 新创建的 worker Tab
+            var chatTabId = (sender.tab && typeof sender.tab.id === 'number') ? sender.tab.id : null;
+            var chatOrigin = (sender.tab && sender.tab.url) || '';
+            updateActiveWorkflows(function (workflows) {
+              workflows[workflowId] = {
+                workflowId: workflowId,
+                chatTabId: chatTabId,
+                workerTabId: tab.id,
+                chatOrigin: chatOrigin,
+                workerOrigin: message.url,
+                startedAt: Date.now(),
+                status: 'active'
+              };
+            });
+
+            // Phase 8 / NAV-07 / Pitfall 4 防御: 向 worker Tab 注入 workflow_id
+            // CS 未就绪时 retry 3 次 200ms — 全部失败也不阻塞 sendResponse
+            // （chat Tab 已知 workflow_id，worker Tab 失败仅影响 inherited context）
+            // 本 plan 仅注入基础 payload（workflow_id）；
+            // Plan 03 Task 5（D-10 缺口补全）会在本调用点补充 inherited_messages + initial_user_message
+            try {
+              sendToTabWithRetry(tab.id, { action: 'workflow-init', workflow_id: workflowId }, 3);
+            } catch (e) {
+              // 静默降级 — 不阻塞 sendResponse
+            }
+
+            // sendResponse 字符串末尾追加 (workflow: <id>) — 让 chat Tab 知道启动了哪个 workflow
+            sendResponse('已打开标签页: [' + tab.id + '] ' + (changeInfo.title || tab.title || '新标签页') + ' (workflow: ' + workflowId + ')');
           }
         }
         chrome.tabs.onUpdated.addListener(onUpdated);
@@ -659,120 +797,13 @@
       return true; // 异步响应
     }
 
-    return false;
-  });
-
-  // ============================================================
-  //  Phase 8 / NAV-07 / D-06: active_workflows 注册机制
-  //
-  //  _activeWorkflows 内存映射（workflowId → 完整 entry），所有 SW handler
-  //  通过闭包访问。MV3 SW idle kill 后内存丢失，必须从 storage 同步恢复
-  //  （应对 RESEARCH.md Pitfall 1）。
-  //
-  //  存储串行化：所有 read-modify-write 通过 updateActiveWorkflows(mutator)
-  //  排队执行（_workflowStorageLock Promise 链），避免并发覆盖（T-08-01）。
-  // ============================================================
-
-  // 内存映射 — workflowId → { workflowId, chatTabId, workerTabId, chatOrigin, workerOrigin, startedAt, status }
-  var _activeWorkflows = {};
-
-  // 写入串行化锁 — 所有 mutator 在此 Promise 链上排队
-  var _workflowStorageLock = Promise.resolve();
-
-  // SW 启动时从 storage 恢复内存映射（同步触发的 top-level 代码）
-  // 失败时（测试环境 / storage 异常）静默降级，_activeWorkflows 保持空对象
-  chrome.storage.local.get('active_workflows').then(function (result) {
-    if (result && result.active_workflows && typeof result.active_workflows === 'object') {
-      _activeWorkflows = result.active_workflows;
-    } else {
-      _activeWorkflows = {};
-    }
-  }).catch(function () {
-    // storage 读取失败 — 静默降级，保持空映射（不影响后续 handler）
-    _activeWorkflows = {};
-  });
-
-  /**
-   * 串行化更新 _activeWorkflows 并写回 storage。
-   * 所有 read-modify-write 操作必须经此 helper，避免并发覆盖（T-08-01 mitigation）。
-   *
-   * @param {function(object)} mutator - 操作 _activeWorkflows（如 set/delete key）
-   * @returns {Promise<void>}
-   */
-  function updateActiveWorkflows(mutator) {
-    _workflowStorageLock = _workflowStorageLock.then(function () {
-      try {
-        if (typeof mutator === 'function') {
-          mutator(_activeWorkflows);
-        }
-      } catch (e) {
-        // mutator 抛错不影响后续排队
-      }
-      return chrome.storage.local.set({ active_workflows: _activeWorkflows });
-    }).catch(function () {
-      // 写入失败 — 静默降级，保持锁链不中断
-    });
-    return _workflowStorageLock;
-  }
-
-  /**
-   * 向 worker Tab 发消息，遇到 'Receiving end does not exist' 时重试
-   * （CS 未就绪场景，Pitfall 4 防御）。maxRetries 默认 3 次，间隔 200ms。
-   *
-   * @param {number} tabId
-   * @param {object} message
-   * @param {number} [maxRetries=3]
-   * @returns {Promise<void>}
-   */
-  function sendToTabWithRetry(tabId, message, maxRetries) {
-    if (typeof maxRetries !== 'number' || maxRetries < 0) maxRetries = 3;
-    return new Promise(function (resolve) {
-      function attempt(retriesLeft) {
-        try {
-          chrome.tabs.sendMessage(tabId, message, function () {
-            var lastError = chrome.runtime.lastError;
-            if (lastError && lastError.message &&
-                lastError.message.indexOf('Receiving end does not exist') >= 0 &&
-                retriesLeft > 0) {
-              // CS 尚未就绪 — 延迟 200ms 重试
-              setTimeout(function () { attempt(retriesLeft - 1); }, 200);
-            } else {
-              // 成功或重试耗尽 — 静默 resolve
-              resolve();
-            }
-          });
-        } catch (e) {
-          // sendMessage 抛错（极端情况）— 重试或放弃
-          if (retriesLeft > 0) {
-            setTimeout(function () { attempt(retriesLeft - 1); }, 200);
-          } else {
-            resolve();
-          }
-        }
-      }
-      attempt(maxRetries);
-    });
-  }
-
-  // ============================================================
-  //  Phase 8 / NAV-07: workflow-progress 中继（工作 Tab → SW → chat Tab）
-  //
-  //  SW 收到工作 Tab 的 workflow-progress 消息后，查 _activeWorkflows
-  //  找到 chatTabId 转发。workflowId 不在映射中时静默降级（可能是 race
-  //  或测试环境）。
-  // ============================================================
-
-  // 注册到 onMessage listener 之外不行 — 必须在原 listener 内 dispatch。
-  // 为避免重复注册第二个 listener，本 plan 用独立 listener 接管 workflow-progress 等新 action。
-  // （保留上方原 listener 不变，下方处理 workflow-* 新 action。）
-
-  chrome.runtime.onMessage.addListener(function (message, sender, sendResponse) {
-    // T-03-02: 验证消息来源为扩展自身
-    if (sender.id !== chrome.runtime.id) {
-      return false;
-    }
+    // ============================================================
+    //  Phase 8 / NAV-07: 跨 Tab 工作流消息中继
+    // ============================================================
 
     // workflow-progress: 工作 Tab → SW → chat Tab 转发
+    // SW 查 _activeWorkflows 找到 chatTabId 转发；workflowId 不在映射中
+    // 时静默降级（可能是 SW restart race 或测试环境）
     if (message.action === 'workflow-progress') {
       var wfId = message.workflow_id;
       var entry = (wfId && _activeWorkflows[wfId]) || null;
@@ -784,7 +815,6 @@
       return false;
     }
 
-    // 其他 workflow-* 消息（complete/error）由后续 plan 03/04 扩展
     return false;
   });
 
