@@ -1603,7 +1603,10 @@
    * @returns {string}
    */
   function getSystemPrompt() {
-    return window.GobyI18n.getSystemPrompt() + toolListLines + '\n';
+    var basePrompt = (window.GobyI18n && window.GobyI18n.getSystemPrompt)
+      ? window.GobyI18n.getSystemPrompt()
+      : '';
+    return basePrompt + toolListLines + '\n';
   }
 
   /**

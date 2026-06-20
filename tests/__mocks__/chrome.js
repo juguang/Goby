@@ -76,7 +76,14 @@ global.chrome = {
   tabs: {
     sendMessage: jest.fn(),
     query: jest.fn(),
-    captureVisibleTab: jest.fn()
+    captureVisibleTab: jest.fn(),
+    create: jest.fn(),
+    update: jest.fn(),
+    remove: jest.fn(),
+    onUpdated: {
+      addListener: jest.fn(),
+      removeListener: jest.fn()
+    }
   },
   scripting: {
     executeScript: jest.fn()
