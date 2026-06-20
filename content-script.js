@@ -998,7 +998,7 @@
         }
       },
       timeout: 15000,
-      execute: function (args) {
+      execute: async function (args) {
         try {
           var selector = args.selector;
           var index = args.index !== undefined ? args.index : 0;
@@ -1023,10 +1023,27 @@
           }
 
           var el = elements[index];
+
+          // Fix PCN: 监听整页 navigation（click 后浏览器异步启动，需等 200ms 检测）
+          // 整页跳转时 LLM 看到 navigation 提示后不会立刻 analyze，避免拿到旧页面内容
+          var navigated = false;
+          var onNav = function () { navigated = true; };
+          window.addEventListener('beforeunload', onNav);
+          window.addEventListener('pagehide', onNav);
+
           el.click();
           el.dispatchEvent(new MouseEvent('mousedown', { bubbles: true }));
           el.dispatchEvent(new MouseEvent('mouseup', { bubbles: true }));
 
+          // 给浏览器时间启动 navigation（200ms 经验值）
+          await new Promise(function (resolve) { setTimeout(resolve, 200); });
+
+          window.removeEventListener('beforeunload', onNav);
+          window.removeEventListener('pagehide', onNav);
+
+          if (navigated || document.readyState === 'loading') {
+            return 'Clicked: ' + selector + ' (navigation started, agent loop will pause until new page loads)';
+          }
           return 'Clicked: ' + selector;
         } catch (e) {
           return 'Click failed: ' + e.message;

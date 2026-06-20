@@ -227,13 +227,13 @@ describe('page_click', function () {
   // ---------------------------------------------------------------
   //  Clicks button element
   // ---------------------------------------------------------------
-  test('clicks button element correctly', function () {
+  test('clicks button element correctly', async function () {
     loadModules();
     var tool = getTool('page_click');
     var btnEl = document.querySelector('#click-btn');
     var clickSpy = jest.fn();
     btnEl.addEventListener('click', clickSpy);
-    var result = tool.execute({ selector: '#click-btn' });
+    var result = await tool.execute({ selector: '#click-btn' });
     expect(clickSpy).toHaveBeenCalledTimes(1);
     expect(result).toBe('Clicked: #click-btn');
   });
@@ -241,13 +241,13 @@ describe('page_click', function () {
   // ---------------------------------------------------------------
   //  Dispatches mousedown event
   // ---------------------------------------------------------------
-  test('dispatches mousedown event', function () {
+  test('dispatches mousedown event', async function () {
     loadModules();
     var tool = getTool('page_click');
     var btnEl = document.querySelector('#click-btn');
     var spy = jest.fn();
     btnEl.addEventListener('mousedown', spy);
-    tool.execute({ selector: '#click-btn' });
+    await tool.execute({ selector: '#click-btn' });
     expect(spy).toHaveBeenCalledTimes(1);
     var event = spy.mock.calls[0][0];
     expect(event.type).toBe('mousedown');
@@ -257,13 +257,13 @@ describe('page_click', function () {
   // ---------------------------------------------------------------
   //  Dispatches mouseup event
   // ---------------------------------------------------------------
-  test('dispatches mouseup event', function () {
+  test('dispatches mouseup event', async function () {
     loadModules();
     var tool = getTool('page_click');
     var btnEl = document.querySelector('#click-btn');
     var spy = jest.fn();
     btnEl.addEventListener('mouseup', spy);
-    tool.execute({ selector: '#click-btn' });
+    await tool.execute({ selector: '#click-btn' });
     expect(spy).toHaveBeenCalledTimes(1);
     var event = spy.mock.calls[0][0];
     expect(event.type).toBe('mouseup');
@@ -273,7 +273,7 @@ describe('page_click', function () {
   // ---------------------------------------------------------------
   //  index=-1 clicks all matching elements
   // ---------------------------------------------------------------
-  test('clicks all matching elements when index=-1', function () {
+  test('clicks all matching elements when index=-1', async function () {
     loadModules();
     var tool = getTool('page_click');
     var links = document.querySelectorAll('.click-link');
@@ -282,7 +282,7 @@ describe('page_click', function () {
     var clickSpy2 = jest.fn();
     links[0].addEventListener('click', clickSpy1);
     links[1].addEventListener('click', clickSpy2);
-    var result = tool.execute({ selector: '.click-link', index: -1 });
+    var result = await tool.execute({ selector: '.click-link', index: -1 });
     expect(clickSpy1).toHaveBeenCalledTimes(1);
     expect(clickSpy2).toHaveBeenCalledTimes(1);
     expect(result).toBe('Clicked all 2 elements');
@@ -291,30 +291,30 @@ describe('page_click', function () {
   // ---------------------------------------------------------------
   //  No matching elements
   // ---------------------------------------------------------------
-  test('returns no-match message when selector finds nothing', function () {
+  test('returns no-match message when selector finds nothing', async function () {
     loadModules();
     var tool = getTool('page_click');
-    var result = tool.execute({ selector: '.nonexistent' });
+    var result = await tool.execute({ selector: '.nonexistent' });
     expect(result).toBe('No elements found matching: .nonexistent');
   });
 
   // ---------------------------------------------------------------
   //  Index out of range
   // ---------------------------------------------------------------
-  test('returns index-out-of-range error', function () {
+  test('returns index-out-of-range error', async function () {
     loadModules();
     var tool = getTool('page_click');
-    var result = tool.execute({ selector: '#click-btn', index: 99 });
+    var result = await tool.execute({ selector: '#click-btn', index: 99 });
     expect(result).toBe('Index 99 out of range. Found 1 elements.');
   });
 
   // ---------------------------------------------------------------
   //  Catches exceptions gracefully
   // ---------------------------------------------------------------
-  test('catches exceptions and returns error message', function () {
+  test('catches exceptions and returns error message', async function () {
     loadModules();
     var tool = getTool('page_click');
-    var result = tool.execute({ selector: '!!!invalid' });
+    var result = await tool.execute({ selector: '!!!invalid' });
     expect(typeof result).toBe('string');
     expect(result).toMatch(/^Click failed: /);
   });
@@ -322,15 +322,135 @@ describe('page_click', function () {
   // ---------------------------------------------------------------
   //  Clicks element by index
   // ---------------------------------------------------------------
-  test('clicks specific element when index is provided', function () {
+  test('clicks specific element when index is provided', async function () {
     loadModules();
     var tool = getTool('page_click');
     var links = document.querySelectorAll('.click-link');
     var clickSpy = jest.fn();
     links[1].addEventListener('click', clickSpy);
-    var result = tool.execute({ selector: '.click-link', index: 1 });
+    var result = await tool.execute({ selector: '.click-link', index: 1 });
     expect(clickSpy).toHaveBeenCalledTimes(1);
     expect(result).toBe('Clicked: .click-link');
+  });
+});
+
+// ================================================================
+//  page_click navigation detection (Fix PCN)
+//  - 单元素点击后 200ms 内检测 beforeunload/pagehide/readyState='loading'
+//  - 触发时返回值带 "(navigation started, agent loop will pause until new page loads)"
+//  - 未触发时保持原 'Clicked: <selector>' 行为
+// ================================================================
+describe('page_click navigation detection', function () {
+  beforeEach(function () {
+    jest.resetModules();
+    jest.clearAllMocks();
+    chrome.storage.local._reset();
+    document.querySelectorAll('.goby-floating-ball, #goby-panel-host').forEach(function (el) {
+      if (el && el.parentNode) el.parentNode.removeChild(el);
+    });
+    document.body.innerHTML = FIXTURE_HTML;
+  });
+
+  // ---------------------------------------------------------------
+  //  Test 1: SPA click（无 navigation 事件，readyState 保持 complete）→ 原返回值
+  // ---------------------------------------------------------------
+  test('Test 1: SPA click without navigation returns plain Clicked message', async function () {
+    loadModules();
+    var tool = getTool('page_click');
+    var result = await tool.execute({ selector: '#click-btn' });
+    expect(result).toBe('Clicked: #click-btn');
+    expect(result).not.toContain('navigation started');
+  });
+
+  // ---------------------------------------------------------------
+  //  Test 2: click 后触发 beforeunload → 返回 navigation 提示
+  // ---------------------------------------------------------------
+  test('Test 2: beforeunload event triggers navigation hint', async function () {
+    loadModules();
+    var tool = getTool('page_click');
+
+    // 在 page_click 内部 200ms 等待窗口中触发 beforeunload
+    setTimeout(function () {
+      window.dispatchEvent(new Event('beforeunload'));
+    }, 50);
+
+    var result = await tool.execute({ selector: '#click-btn' });
+    expect(result).toBe('Clicked: #click-btn (navigation started, agent loop will pause until new page loads)');
+  });
+
+  // ---------------------------------------------------------------
+  //  Test 3: click 后触发 pagehide → 返回 navigation 提示
+  // ---------------------------------------------------------------
+  test('Test 3: pagehide event triggers navigation hint', async function () {
+    loadModules();
+    var tool = getTool('page_click');
+
+    setTimeout(function () {
+      window.dispatchEvent(new Event('pagehide'));
+    }, 50);
+
+    var result = await tool.execute({ selector: '#click-btn' });
+    expect(result).toBe('Clicked: #click-btn (navigation started, agent loop will pause until new page loads)');
+  });
+
+  // ---------------------------------------------------------------
+  //  Test 4: click 后 document.readyState === 'loading' → 返回 navigation 提示
+  // ---------------------------------------------------------------
+  test('Test 4: readyState=loading triggers navigation hint', async function () {
+    loadModules();
+    var tool = getTool('page_click');
+
+    // jsdom 默认 readyState='complete'，需在等待窗口中临时改成 'loading'
+    var origDescriptor = Object.getOwnPropertyDescriptor(document, 'readyState');
+    setTimeout(function () {
+      try {
+        Object.defineProperty(document, 'readyState', { value: 'loading', configurable: true });
+      } catch (e) { /* ignore */ }
+    }, 50);
+
+    var result = await tool.execute({ selector: '#click-btn' });
+
+    // 恢复（避免污染后续测试）
+    if (origDescriptor) {
+      try {
+        Object.defineProperty(document, 'readyState', { value: 'complete', configurable: true });
+      } catch (e) { /* ignore */ }
+    }
+
+    expect(result).toBe('Clicked: #click-btn (navigation started, agent loop will pause until new page loads)');
+  });
+
+  // ---------------------------------------------------------------
+  //  Test 5: index=-1 click all 不进入 navigation 检测
+  // ---------------------------------------------------------------
+  test('Test 5: click all (index=-1) skips navigation detection', async function () {
+    loadModules();
+    var tool = getTool('page_click');
+
+    // 即使有 navigation 事件，click all 也应保持同步返回 'Clicked all N elements'
+    setTimeout(function () {
+      window.dispatchEvent(new Event('beforeunload'));
+    }, 50);
+
+    var result = await tool.execute({ selector: '.click-link', index: -1 });
+    expect(result).toBe('Clicked all 2 elements');
+    expect(result).not.toContain('navigation started');
+  });
+
+  // ---------------------------------------------------------------
+  //  Test 6: 元素未找到走同步分支，不进入 async 等待
+  // ---------------------------------------------------------------
+  test('Test 6: no elements found skips navigation detection', async function () {
+    loadModules();
+    var tool = getTool('page_click');
+
+    var startTime = Date.now();
+    var result = await tool.execute({ selector: '.nonexistent' });
+    var elapsed = Date.now() - startTime;
+
+    expect(result).toBe('No elements found matching: .nonexistent');
+    // 元素未找到应快速返回，不应等 200ms
+    expect(elapsed).toBeLessThan(150);
   });
 });
 
