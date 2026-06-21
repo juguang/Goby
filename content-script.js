@@ -2945,6 +2945,20 @@
           _agentState.messages.push({ role: 'assistant', content: limitMsg });
           GobyPanel.appendMessage('bot', limitMsg);
           loopExitedByLimit = true;
+          // Phase 8 fix (260621-lKk): worker Tab 模式下 MAX_LOOPS 触发必须主动
+          //   sendToSW('page-finish-workflow') 把失败 summary 回传 chat Tab，否则
+          //   chat Tab 永久卡死等 workflow_complete。worker AI 没机会调工具就
+          //   被强制 break，所以 agent loop 必须兜底。
+          //   注：summary 用 limitMsg 而非 AI 生成的总结（AI 已被截断）。
+          if (window.__gobyWorkflowId) {
+            try {
+              sendToSW('page-finish-workflow', {
+                action: 'page-finish-workflow',
+                workflow_id: window.__gobyWorkflowId,
+                summary: '⚠️ Worker Tab 达到 MAX_LOOPS=' + MAX_LOOPS + ' 轮被强制停止，任务未完成。建议简化任务或拆分多步。'
+              });
+            } catch (e) { /* 静默降级 — 不阻塞 break */ }
+          }
           break;
         }
       } else {
