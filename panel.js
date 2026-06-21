@@ -1333,7 +1333,7 @@
    * 显示面板（创建面板壳 + 应用展开动画）
    */
   function animateShow() {
-    if (!_host || !document.body.contains(_host)) {
+    if (!_host || !document.documentElement.contains(_host)) {
       _host = null;
       createPanelShell();
     }
@@ -1350,7 +1350,7 @@
    */
   function animateHide() {
     if (_host) {
-      if (!document.body.contains(_host)) {
+      if (!document.documentElement.contains(_host)) {
         _host = null;
         return;
       }
