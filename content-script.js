@@ -3001,7 +3001,24 @@
         }
       } else {
         // 文本回复 — 已由 handleStreamChunk 完成流式渲染
-        _agentState.messages.push({ role: 'assistant', content: (response && response.content) || '' });
+        var assistantText = (response && response.content) || '';
+        // Phase 8 fix: worker Tab 模式下 LLM 纯文本回复不会显示给用户（prompt 已声明），
+        //   但某些场景 LLM 仍可能用文本回复而非调 page_finish_workflow。
+        //   兜底：拦截文本回复，直接把文本作为 summary 调 page_finish_workflow，
+        //   不 push 到 messages（chat Tab 看到的是 [From workflow] 而非本地文本）。
+        if (window.__gobyWorkflowId && assistantText) {
+          try {
+            sendToSW('page-finish-workflow', {
+              action: 'page-finish-workflow',
+              workflow_id: window.__gobyWorkflowId,
+              summary: assistantText
+            });
+          } catch (e) { /* 静默降级 */ }
+          // 仍然 push 文本到 messages——worker AI 完成了一轮对话，保持消息数组一致
+          _agentState.messages.push({ role: 'assistant', content: assistantText });
+        } else {
+          _agentState.messages.push({ role: 'assistant', content: assistantText });
+        }
         // 同步保存到 storage（避免依赖 beforeunload 异步保存被截断）
         // 通过 window.GobyAgent.saveSession 调用 — 测试可 spy（Plan 03-03 既定模式）
         window.GobyAgent.saveSession();
