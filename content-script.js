@@ -3219,7 +3219,6 @@
     if (_builtinPreloaded) {
       return Promise.resolve();
     }
-    _builtinPreloaded = true;
 
     return GobyStorage.getAllSkills().then(function (allSkills) {
       var installedDomains = Object.keys(allSkills);
@@ -3273,7 +3272,9 @@
           });
         })(BUILTIN_SKILLS[s]);
       }
-      return chain;
+      return chain.then(function () {
+        _builtinPreloaded = true;
+      });
     });
   }
 
