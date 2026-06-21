@@ -769,9 +769,12 @@
             //   fallback 路径保持原格式（向后兼容 08-workflow-init-payload.test.js test 4）
             var initialUserMessage;
             if (message.task && typeof message.task === 'string' && message.task.trim()) {
-              initialUserMessage = '[Workflow ' + workflowId + '] 你是 worker Tab，任务：' + message.task.trim() +
-                '\n完成任务后**必须**调用 page_finish_workflow 工具，summary 参数写一句简洁的中文总结（包含关键结果/数据/链接），把结果回传给 chat Tab。' +
-                '禁止只用文本回复代替工具调用——不调 page_finish_workflow，chat Tab 会永久卡死。';
+              initialUserMessage = '[Workflow ' + workflowId + '] 你是 worker Tab，已经在目标页面上（URL: ' + workerOrigin + '）。任务：' + message.task.trim() +
+                '\n\n执行约束：' +
+                '\n1. **禁止调 page_navigate** —— 你已经在目标页面，跳走会导致 session 丢失、workflow 卡死。如需去其他页面，告知 chat Tab 后由它启动新 workflow。' +
+                '\n2. 直接用 page_query / page_evaluate / page_analyze / page_screenshot 等工具操作当前页面。' +
+                '\n3. 完成任务后**必须**调用 page_finish_workflow 工具，summary 参数写一句简洁的中文总结（包含关键结果/数据/链接），把结果回传给 chat Tab。' +
+                '\n4. 禁止只用文本回复代替工具调用——不调 page_finish_workflow，chat Tab 会永久卡死。';
             } else {
               initialUserMessage = 'Working in workflow ' + workflowId + ', origin: ' + workerOrigin;
             }
