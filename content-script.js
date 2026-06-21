@@ -1874,6 +1874,63 @@
     }
     clean = deduped;
 
+    // Fix HTTP 400 — 补全缺失的 tool message
+    // OpenAI 兼容 API 要求 assistant.tool_calls 后紧跟对应 tool messages（每个 tool_call_id 一条）
+    // 中断/异常路径（如 navigation break、null result、resume 时序错位）可能留下
+    // assistant.tool_calls=N 但 tool messages<M 的不一致状态，导致 API 报
+    // "insufficient tool messages following tool_calls message"。
+    // 此处扫描整个数组，为每个未配对的 tool_call_id 补一条占位 tool message。
+    var final = [];
+    var pendingIds = [];
+    var pendingNames = {};
+    function flushPending() {
+      for (var pp = 0; pp < pendingIds.length; pp++) {
+        var pid = pendingIds[pp];
+        final.push({
+          role: 'tool',
+          tool_call_id: pid,
+          name: pendingNames[pid] || 'interrupted',
+          content: 'Tool execution was interrupted before this call could be completed.'
+        });
+      }
+      pendingIds = [];
+      pendingNames = {};
+    }
+    for (var fi = 0; fi < clean.length; fi++) {
+      var fm = clean[fi];
+      if (fm.role === 'assistant' && fm.tool_calls && fm.tool_calls.length > 0) {
+        // 遇到新的 assistant.tool_calls — 先 flush 上一轮未配对的
+        flushPending();
+        // 登记本轮所有 tool_call_id
+        var fmTcs = Array.isArray(fm.tool_calls) ? fm.tool_calls : [];
+        for (var fti = 0; fti < fmTcs.length; fti++) {
+          var tid = fmTcs[fti].id;
+          if (tid) {
+            pendingIds.push(tid);
+            pendingNames[tid] = (fmTcs[fti].function && fmTcs[fti].function.name) || 'tool';
+          }
+        }
+        final.push(fm);
+      } else if (fm.role === 'tool' && fm.tool_call_id) {
+        // 配对一个 pending id
+        var matchIdx = pendingIds.indexOf(fm.tool_call_id);
+        if (matchIdx !== -1) {
+          pendingIds.splice(matchIdx, 1);
+          final.push(fm);
+        } else {
+          // 重复 tool message 或未知 id — 保留（其他校验已处理）
+          final.push(fm);
+        }
+      } else {
+        // user/无 tool_calls 的 assistant/system — 必须先 flush pending
+        flushPending();
+        final.push(fm);
+      }
+    }
+    // 末尾 flush 兜底
+    flushPending();
+    clean = final;
+
     return clean;
   }
 
