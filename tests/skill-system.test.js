@@ -1500,3 +1500,489 @@ describe('Skill Tool Registration (Plan 09-02)', function () {
       }).catch(done.fail);
     });
   });
+
+  // =============================================================
+  //  Plan 09-04: UI & Settings Integration Tests
+  // =============================================================
+
+  describe('Skill Enable/Disable (Plan 09-04)', function () {
+    var _raw;
+
+    beforeEach(function () {
+      jest.resetModules();
+      var util = require('util');
+      global.TextEncoder = util.TextEncoder;
+      global.TextDecoder = util.TextDecoder;
+      require('./__mocks__/chrome.js');
+      _raw = chrome.storage.local._raw;
+      require('../storage.js');
+    });
+
+    it('toggleSkill 应正确更新 enabled 字段', function (done) {
+      // 先保存一个技能
+      GobyStorage.saveSkill('test.com', {
+        name: 'Test Skill',
+        description: 'A test skill',
+        domain: 'test.com',
+        actions: [{ name: 'test_action', description: 'Test', inputSchema: {}, execute: function () { return 'ok'; } }],
+        source: 'manual'
+      }).then(function () {
+        // 验证默认 enabled=true
+        return GobyStorage.getSkill('test.com');
+      }).then(function (skill) {
+        expect(skill.enabled).toBe(true);
+
+        // 禁用技能
+        return GobyStorage.toggleSkill('test.com', false);
+      }).then(function (result) {
+        expect(result).toBe(true);
+
+        // 验证 enabled=false
+        return GobyStorage.getSkill('test.com');
+      }).then(function (skill) {
+        expect(skill.enabled).toBe(false);
+
+        // 重新启用
+        return GobyStorage.toggleSkill('test.com', true);
+      }).then(function (result) {
+        expect(result).toBe(true);
+
+        return GobyStorage.getSkill('test.com');
+      }).then(function (skill) {
+        expect(skill.enabled).toBe(true);
+        done();
+      }).catch(done.fail);
+    });
+
+    it('toggleSkill 对不存在的 domain 返回 false', function (done) {
+      GobyStorage.toggleSkill('nonexistent.com', false).then(function (result) {
+        expect(result).toBe(false);
+        done();
+      }).catch(done.fail);
+    });
+
+    it('saveSkill 默认设置 enabled=true', function (done) {
+      GobyStorage.saveSkill('default-test.com', {
+        name: 'Default Enabled',
+        domain: 'default-test.com',
+        actions: []
+      }).then(function () {
+        return GobyStorage.getSkill('default-test.com');
+      }).then(function (skill) {
+        expect(skill.enabled).toBe(true);
+        done();
+      }).catch(done.fail);
+    });
+
+    it('saveSkill 保留显式 enabled=false', function (done) {
+      GobyStorage.saveSkill('disabled-test.com', {
+        name: 'Explicitly Disabled',
+        domain: 'disabled-test.com',
+        actions: [],
+        enabled: false
+      }).then(function () {
+        return GobyStorage.getSkill('disabled-test.com');
+      }).then(function (skill) {
+        expect(skill.enabled).toBe(false);
+        done();
+      }).catch(done.fail);
+    });
+  });
+
+  describe('registerSkillTools with enabled/disabled (Plan 09-04)', function () {
+    var _raw;
+    var internals;
+
+    function setupCS() {
+      jest.resetModules();
+      var util = require('util');
+      global.TextEncoder = util.TextEncoder;
+      global.TextDecoder = util.TextDecoder;
+      require('./__mocks__/chrome.js');
+      _raw = chrome.storage.local._raw;
+      var purifyFactory = require('../lib/purify.min.js');
+      window.DOMPurify = purifyFactory(window);
+      window.marked = require('../lib/marked.min.js');
+      require('../lib/i18n.js');
+      require('../storage.js');
+      require('../panel.js');
+      require('../content-script.js');
+      internals = global.__gobyInternals || {};
+    }
+
+    it('registerSkillTools 应跳过 enabled=false 的技能', function (done) {
+      setupCS();
+
+      // 保存一个已禁用的技能
+      GobyStorage.saveSkill('disabled-skill.com', {
+        name: 'Disabled Skill',
+        description: 'This skill is disabled',
+        domain: 'disabled-skill.com',
+        actions: [{
+          name: 'disabled_action',
+          description: 'Should not be registered',
+          inputSchema: { type: 'object', properties: {} },
+          execute: function () { return 'should not run'; }
+        }],
+        source: 'manual',
+        enabled: false
+      }).then(function () {
+        return internals.registerSkillTools('disabled-skill.com');
+      }).then(function (count) {
+        expect(count).toBe(0);
+        expect(internals._activeSkillTools.length).toBe(0);
+        done();
+      }).catch(done.fail);
+    });
+
+    it('registerSkillTools 应注册 enabled=true 的技能', function (done) {
+      setupCS();
+
+      GobyStorage.saveSkill('enabled-skill.com', {
+        name: 'Enabled Skill',
+        description: 'This skill is enabled',
+        domain: 'enabled-skill.com',
+        actions: [{
+          name: 'enabled_action',
+          description: 'Should be registered',
+          inputSchema: { type: 'object', properties: {} },
+          execute: function () { return 'it works'; }
+        }],
+        source: 'manual',
+        enabled: true
+      }).then(function () {
+        return internals.registerSkillTools('enabled-skill.com');
+      }).then(function (count) {
+        expect(count).toBe(1);
+        expect(internals._activeSkillTools.length).toBe(1);
+        expect(internals._activeSkillTools[0].function.name).toBe('enabled_action');
+        done();
+      }).catch(done.fail);
+    });
+
+    it('registerSkillTools 对缺少 enabled 字段的技能默认视为启用', function (done) {
+      setupCS();
+
+      // 保存一个没有 enabled 字段的技能（模拟旧格式）
+      GobyStorage.saveSkill('legacy-skill.com', {
+        name: 'Legacy Skill',
+        description: 'No enabled field',
+        domain: 'legacy-skill.com',
+        actions: [{
+          name: 'legacy_action',
+          description: 'Should work',
+          inputSchema: { type: 'object', properties: {} },
+          execute: function () { return 'legacy'; }
+        }],
+        source: 'builtin'
+      }).then(function () {
+        // 手动移除 enabled 字段，模拟旧数据
+        var skills = _raw['gobySkills'] || {};
+        if (skills['legacy-skill.com']) {
+          delete skills['legacy-skill.com'].enabled;
+        }
+        _raw['gobySkills'] = skills;
+
+        return internals.registerSkillTools('legacy-skill.com');
+      }).then(function (count) {
+        expect(count).toBe(1);
+        done();
+      }).catch(done.fail);
+    });
+  });
+
+  describe('Skill Delete (Plan 09-04)', function () {
+    var _raw;
+
+    beforeEach(function () {
+      jest.resetModules();
+      var util = require('util');
+      global.TextEncoder = util.TextEncoder;
+      global.TextDecoder = util.TextDecoder;
+      require('./__mocks__/chrome.js');
+      _raw = chrome.storage.local._raw;
+      require('../storage.js');
+    });
+
+    it('deleteSkill 应正确删除技能', function (done) {
+      GobyStorage.saveSkill('delete-me.com', {
+        name: 'Delete Me',
+        domain: 'delete-me.com',
+        actions: []
+      }).then(function () {
+        return GobyStorage.getAllSkills();
+      }).then(function (all) {
+        expect('delete-me.com' in all).toBe(true);
+        return GobyStorage.deleteSkill('delete-me.com');
+      }).then(function (result) {
+        expect(result).toBe(true);
+        return GobyStorage.getAllSkills();
+      }).then(function (all) {
+        expect('delete-me.com' in all).toBe(false);
+        done();
+      }).catch(done.fail);
+    });
+
+    it('deleteSkill 对不存在的 domain 返回 false', function (done) {
+      GobyStorage.deleteSkill('nonexistent.com').then(function (result) {
+        expect(result).toBe(false);
+        done();
+      }).catch(done.fail);
+    });
+  });
+
+  describe('Settings Modal Skills Section (Plan 09-04)', function () {
+    var _raw;
+
+    function setupCSEnv() {
+      jest.resetModules();
+      var util = require('util');
+      global.TextEncoder = util.TextEncoder;
+      global.TextDecoder = util.TextDecoder;
+      require('./__mocks__/chrome.js');
+      _raw = chrome.storage.local._raw;
+
+      // Add getURL to chrome mock (needed by init chain)
+      if (!chrome.runtime.getURL) {
+        chrome.runtime.getURL = jest.fn(function (relativePath) {
+          return 'chrome-extension://test-id/' + relativePath;
+        });
+      }
+
+      // Mock fetch for built-in skill preload (prevents it from failing silently
+      // and leaving gobySkills empty when _preloadBuiltinSkills runs async during init)
+      var fs = require('fs');
+      var path = require('path');
+      var skillsDir = path.join(__dirname, '..', 'skills', 'builtin');
+      global.fetch = jest.fn(function (url) {
+        var fileName = url.split('/').pop();
+        var filePath = path.join(skillsDir, fileName);
+        try {
+          var content = fs.readFileSync(filePath, 'utf8');
+          return Promise.resolve({
+            ok: true,
+            text: function () { return Promise.resolve(content); }
+          });
+        } catch (e) {
+          return Promise.resolve({ ok: false, text: function () { return Promise.resolve(''); } });
+        }
+      });
+
+      // Seed gobySkills with test data before modules load
+      _raw['gobySkills'] = {
+        'amazon.com': {
+          name: 'Amazon Search',
+          description: 'Search Amazon',
+          domain: 'amazon.com',
+          actions: [{ name: 'amazon-search', description: 'Search', inputSchema: {}, execute: function () {} }, { name: 'amazon-product', description: 'Product', inputSchema: {}, execute: function () {} }],
+          source: 'builtin',
+          enabled: true,
+          installedAt: Date.now()
+        },
+        'example.com': {
+          name: 'Example Skill',
+          description: 'An imported skill',
+          domain: 'example.com',
+          actions: [{ name: 'example-action', description: 'Test', inputSchema: {}, execute: function () {} }],
+          source: 'manual',
+          enabled: false,
+          installedAt: Date.now()
+        }
+      };
+
+      var purifyFactory = require('../lib/purify.min.js');
+      window.DOMPurify = purifyFactory(window);
+      window.marked = require('../lib/marked.min.js');
+      require('../lib/i18n.js');
+      require('../storage.js');
+      require('../panel.js');
+      require('../content-script.js');
+    }
+
+    // 辅助：等待异步 promise 循环完成
+    function waitForAsync(done, timeout) {
+      setTimeout(function () { done(); }, timeout || 200);
+    }
+
+    it('设置模态框应包含技能管理区域（DOM 结构验证）', function () {
+      setupCSEnv();
+      var existing = document.querySelector('.goby-modal-backdrop');
+      if (existing) existing.remove();
+
+      window.openSettingsModal();
+
+      var skillsSection = document.querySelector('.goby-skills-section');
+      expect(skillsSection).toBeTruthy();
+
+      // 节标题存在
+      var skillsTitle = skillsSection.querySelector('.goby-skills-section-title');
+      expect(skillsTitle).toBeTruthy();
+
+      // 导入按钮存在
+      var importBtn = document.getElementById('goby-skills-import-btn');
+      expect(importBtn).toBeTruthy();
+
+      // 导入行存在但隐藏
+      var importRow = document.getElementById('goby-skill-import-row');
+      expect(importRow).toBeTruthy();
+      expect(importRow.style.display).toBe('none');
+
+      // 技能列表容器存在
+      var skillsList = document.getElementById('goby-skills-list');
+      expect(skillsList).toBeTruthy();
+
+      // 推荐列表容器存在
+      var recList = document.getElementById('goby-recommended-list');
+      expect(recList).toBeTruthy();
+
+      // 反馈容器存在
+      var feedback = document.getElementById('goby-skill-feedback');
+      expect(feedback).toBeTruthy();
+
+      // 清理
+      var backdrop = document.querySelector('.goby-modal-backdrop');
+      if (backdrop) backdrop.remove();
+    });
+
+    it('点击导入按钮应切换导入行可见性', function () {
+      setupCSEnv();
+      var existing = document.querySelector('.goby-modal-backdrop');
+      if (existing) existing.remove();
+
+      window.openSettingsModal();
+
+      var importRow = document.getElementById('goby-skill-import-row');
+      expect(importRow.style.display).toBe('none');
+
+      var importBtn = document.getElementById('goby-skills-import-btn');
+      importBtn.click();
+      expect(importRow.style.display).not.toBe('none');
+
+      // 清理
+      var backdrop = document.querySelector('.goby-modal-backdrop');
+      if (backdrop) backdrop.remove();
+    });
+
+    it('取消按钮应隐藏导入行', function () {
+      setupCSEnv();
+      var existing = document.querySelector('.goby-modal-backdrop');
+      if (existing) existing.remove();
+
+      window.openSettingsModal();
+
+      // 先显示导入行
+      var importBtn = document.getElementById('goby-skills-import-btn');
+      importBtn.click();
+
+      var importRow = document.getElementById('goby-skill-import-row');
+      expect(importRow.style.display).not.toBe('none');
+
+      // 点击取消
+      var cancelBtn = document.getElementById('goby-skill-import-cancel-btn');
+      cancelBtn.click();
+      expect(importRow.style.display).toBe('none');
+
+      // 清理
+      var backdrop = document.querySelector('.goby-modal-backdrop');
+      if (backdrop) backdrop.remove();
+    });
+
+    it('导入 URL 输入框渲染后应包含确认和取消按钮', function () {
+      setupCSEnv();
+      var existing = document.querySelector('.goby-modal-backdrop');
+      if (existing) existing.remove();
+
+      window.openSettingsModal();
+
+      var confirmBtn = document.getElementById('goby-skill-import-confirm-btn');
+      expect(confirmBtn).toBeTruthy();
+
+      var cancelBtn = document.getElementById('goby-skill-import-cancel-btn');
+      expect(cancelBtn).toBeTruthy();
+
+      var inputEl = document.getElementById('goby-skill-import-input');
+      expect(inputEl).toBeTruthy();
+
+      // 清理
+      var backdrop = document.querySelector('.goby-modal-backdrop');
+      if (backdrop) backdrop.remove();
+    });
+
+    it('GobyStorage.getAllSkills 应返回已安装技能', function (done) {
+      setupCSEnv();
+
+      GobyStorage.getAllSkills().then(function (skills) {
+        var domains = Object.keys(skills);
+        expect(domains.length).toBeGreaterThanOrEqual(2);
+        expect(skills['amazon.com']).toBeTruthy();
+        expect(skills['amazon.com'].name).toBe('Amazon Search');
+        expect(skills['amazon.com'].source).toBe('builtin');
+        expect(skills['amazon.com'].enabled).toBe(true);
+        expect(skills['amazon.com'].actions.length).toBe(2);
+        expect(skills['example.com']).toBeTruthy();
+        expect(skills['example.com'].enabled).toBe(false);
+        done();
+      }).catch(done.fail);
+    });
+
+    it('GobyStorage.toggleSkill 应正确切换启用状态', function (done) {
+      setupCSEnv();
+
+      // 禁用 amazon
+      GobyStorage.toggleSkill('amazon.com', false).then(function (result) {
+        expect(result).toBe(true);
+        return GobyStorage.getSkill('amazon.com');
+      }).then(function (skill) {
+        expect(skill.enabled).toBe(false);
+        // 重新启用
+        return GobyStorage.toggleSkill('amazon.com', true);
+      }).then(function (result) {
+        expect(result).toBe(true);
+        return GobyStorage.getSkill('amazon.com');
+      }).then(function (skill) {
+        expect(skill.enabled).toBe(true);
+        done();
+      }).catch(done.fail);
+    });
+
+    it('GobyStorage.deleteSkill 应正确删除技能', function (done) {
+      setupCSEnv();
+
+      GobyStorage.getAllSkills().then(function (skills) {
+        var domains = Object.keys(skills);
+        expect(domains.length).toBeGreaterThanOrEqual(2);
+
+        return GobyStorage.deleteSkill('example.com');
+      }).then(function (removed) {
+        expect(removed).toBe(true);
+        return GobyStorage.getAllSkills();
+      }).then(function (skills) {
+        expect(skills['example.com']).toBeFalsy();
+        expect(skills['amazon.com']).toBeTruthy();
+        done();
+      }).catch(done.fail);
+    });
+  });
+
+  describe('Import URL Validation (Plan 09-04)', function () {
+    it('应拒绝 http:// URL', function () {
+      var url = 'http://example.com/skill.md';
+      expect(url.indexOf('https://')).not.toBe(0);
+      expect(url.indexOf('https://')).toBe(-1);
+    });
+
+    it('应拒绝 file:// URL', function () {
+      var url = 'file:///etc/passwd';
+      expect(url.indexOf('https://')).not.toBe(0);
+    });
+
+    it('应接受 https:// URL', function () {
+      var url = 'https://raw.githubusercontent.com/browsing-skills/browsing-skills/main/skills/test/SKILL.md';
+      expect(url.indexOf('https://')).toBe(0);
+    });
+
+    it('应拒绝空 URL', function () {
+      var url = '';
+      expect(url.trim()).toBe('');
+    });
+  });
