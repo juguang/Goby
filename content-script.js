@@ -962,12 +962,9 @@
 
     function refreshRecommendedList() {
       var recList = document.getElementById('goby-recommended-list');
-      console.log('[skills] refreshRecommendedList called, recList:', recList);
       if (!recList) return;
 
       window.GobyAgent.listSkills().then(function (installedSkills) {
-        console.log('[skills] listSkills returned:', installedSkills);
-        console.log('[skills] RECOMMENDED_SKILLS:', RECOMMENDED_SKILLS);
         recList.innerHTML = '';
         for (var i = 0; i < RECOMMENDED_SKILLS.length; i++) {
           var rec = RECOMMENDED_SKILLS[i];
@@ -1054,12 +1051,6 @@
       });
     }
 
-    // 初次加载技能列表
-    console.log('[skills] 准备调用 refreshSkillsList + refreshRecommendedList');
-    refreshSkillsList();
-    refreshRecommendedList();
-    console.log('[skills] refreshSkillsList + refreshRecommendedList 已调用');
-
     // Save button
     var saveBtn = document.createElement('button');
     saveBtn.className = 'goby-modal-save-btn';
@@ -1076,6 +1067,12 @@
     modal.appendChild(body);
     backdrop.appendChild(modal);
     document.documentElement.appendChild(backdrop);
+
+    // Phase 9: 技能列表刷新必须在 modal 挂到 documentElement 之后
+    // （getElementById 只能找到已挂载 DOM 中的元素）
+    console.log('[skills] 加载技能列表');
+    refreshSkillsList();
+    refreshRecommendedList();
 
     // ---- Event Wiring ----
 
