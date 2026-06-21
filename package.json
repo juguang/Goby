@@ -1,6 +1,6 @@
 {
   "name": "goby",
-  "version": "0.1.0",
+  "version": "0.3.0",
   "description": "AI browser assistant that operates any web page through natural-language conversation",
   "main": "background.js",
   "directories": {
