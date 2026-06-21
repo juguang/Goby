@@ -29,7 +29,10 @@ function seedSession(sessionId, origin, messages, updatedAt) {
     updatedAt: updatedAt,
     messageCount: messages.length,
     preview: '',
-    messages: messages
+    messages: messages,
+    // Phase 8 fix: 跨域继承现在要求 interrupted=true（模拟 page_navigate 打断）
+    interrupted: true,
+    interruptedAt: Date.now()
   };
   chrome.storage.local._raw.gobySessions = sessions;
 }
