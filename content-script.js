@@ -1034,8 +1034,20 @@
             })(rec);
           }
         }
-      }).catch(function () {
-        // 静默降级
+      }).catch(function (err) {
+        console.error('[skills] refreshRecommendedList 失败:', err);
+        // 静默降级 — 至少显示灰掉的推荐项
+        recList.innerHTML = '';
+        for (var fi = 0; fi < RECOMMENDED_SKILLS.length; fi++) {
+          var r = RECOMMENDED_SKILLS[fi];
+          var ri = document.createElement('div');
+          ri.className = 'goby-recommended-item';
+          var s = document.createElement('span');
+          s.textContent = r.name + ' · ' + r.actions + ' 个操作';
+          s.style.opacity = '0.5';
+          ri.appendChild(s);
+          recList.appendChild(ri);
+        }
       });
     }
 
