@@ -3308,22 +3308,24 @@
               window.GobyPanel.appendMessage(panelRole, msg.content);
             }
           }
-          // Phase 8 fix: 跨域 resume — 仅当源 session 是从 page_navigate 中断时
-          //   （非 page_open_tab workflow break）。workflow 中断由 workflow-init
-          //   启动 worker Tab，不靠 D-01 resume。
-          //   区分方式：源 session 最后几条消息中有 '(workflow:' 的是 workflow break，
-          //   不 resume。有 '(navigation started' 的是 navigation break，要 resume。
+          // Phase 8 fix: 跨域 resume — 仅当源 session 的最后一次中断是从
+          //   page_navigate 来的（非 page_open_tab workflow break）。
+          //   区分方式：找源 session **最后一条** tool message，看它的内容。
+          //   '(workflow:' / '(workflow_started' → workflow break，不 resume。
+          //   '(navigation started' → navigation break，要 resume。
           if (loaded.interrupted === true &&
               loaded.interruptedAt && Date.now() - loaded.interruptedAt < 60000) {
-            var isWorkflowBreak = false;
-            for (var wi = loaded.messages.length - 1; wi >= Math.max(0, loaded.messages.length - 5); wi--) {
-              var wm = loaded.messages[wi];
-              if (wm && typeof wm.content === 'string' && wm.content.indexOf('(workflow:') !== -1) {
-                isWorkflowBreak = true;
-                break;
+            var isWorkflowInterrupted = false;
+            for (var wj = loaded.messages.length - 1; wj >= 0; wj--) {
+              var wm = loaded.messages[wj];
+              if (wm && wm.role === 'tool' && typeof wm.content === 'string') {
+                if (wm.content.indexOf('(workflow:') !== -1 || wm.content.indexOf('(workflow_started') !== -1) {
+                  isWorkflowInterrupted = true;
+                }
+                break; // 只看最后一条 tool message
               }
             }
-            if (!isWorkflowBreak) {
+            if (!isWorkflowInterrupted) {
               window.GobyAgent.processAgentMessage(null, { resume: true });
             }
           }
