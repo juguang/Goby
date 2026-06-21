@@ -2647,6 +2647,121 @@
   }
 
   // ================================================================
+  //  Plan 09-01: Skills 系统 — CS 侧导入/列表/删除
+  // ================================================================
+
+  /**
+   * importSkill — 从 URL 导入 SKILL.md 技能文件
+   * 流程：URL → SW fetch → 解析 markdown → 验证 → SW 写入 storage
+   *
+   * @param {string} url - SKILL.md 文件的 https:// URL
+   * @returns {Promise<{ok: boolean, domain?: string, error?: string}>}
+   */
+  function importSkill(url) {
+    if (!url || typeof url !== 'string') {
+      return Promise.resolve({ ok: false, error: '缺少 url 参数' });
+    }
+
+    return sendToSW('skill-import', { action: 'skill-import', url: url }).then(function (response) {
+      // sendToSW 返回字符串（成功响应）或 Error: 开头的字符串（失败）
+      if (typeof response === 'string' && response.startsWith('Error:')) {
+        return { ok: false, error: response };
+      }
+
+      // 检查 response 是否已经是成功对象（有 ok 字段）
+      // SW 可能返回 { ok: true, content: '...' } 或 { ok: false, error: '...' }
+      if (response && typeof response === 'object') {
+        if (!response.ok) {
+          return { ok: false, error: response.error || '导入失败' };
+        }
+        // 成功获取 markdown 内容
+        return parseAndStoreSkill(response.content, url);
+      }
+
+      return { ok: false, error: '未知响应格式: ' + JSON.stringify(response) };
+    });
+  }
+
+  /**
+   * parseAndStoreSkill — 解析 markdown → 验证 → 写入 storage
+   * @param {string} markdownText - SKILL.md 原始内容
+   * @returns {Promise<{ok: boolean, domain?: string, error?: string}>}
+   */
+  function parseAndStoreSkill(markdownText, sourceUrl) {
+    if (typeof SkillLoader === 'undefined' || !SkillLoader.parseSkillMarkdown) {
+      return Promise.resolve({ ok: false, error: 'SkillLoader 模块未加载' });
+    }
+
+    // 步骤 1: 解析 markdown
+    var parseResult;
+    try {
+      parseResult = SkillLoader.parseSkillMarkdown(markdownText);
+    } catch (e) {
+      return Promise.resolve({ ok: false, error: '解析 SKILL.md 失败: ' + (e.message || String(e)) });
+    }
+
+    // 步骤 2: 验证
+    var validation = SkillLoader.validateSkill(parseResult);
+    if (!validation.valid) {
+      return Promise.resolve({ ok: false, error: '验证失败: ' + validation.errors.join('; ') });
+    }
+
+    // 步骤 3: 写入 storage（委托 SW）
+    return sendToSW('skill-store', {
+      action: 'skill-store',
+      skillManifest: {
+        name: validation.skillManifest.name,
+        description: validation.skillManifest.description,
+        domain: validation.skillManifest.domain,
+        actions: validation.skillManifest.actions,
+        source: sourceUrl
+      }
+    }).then(function (storeResponse) {
+      if (storeResponse && storeResponse.ok) {
+        return { ok: true, domain: storeResponse.domain };
+      }
+      var errMsg = (storeResponse && storeResponse.error) || '写入 storage 失败';
+      return { ok: false, error: errMsg };
+    });
+  }
+
+  /**
+   * listSkills — 获取所有已安装技能
+   * @returns {Promise<Object>} { domain: skillManifest, ... }
+   */
+  function listSkills() {
+    return new Promise(function (resolve) {
+      chrome.storage.local.get(['gobySkills'], function (result) {
+        resolve(result.gobySkills || {});
+      });
+    });
+  }
+
+  /**
+   * removeSkill — 按 domain 删除技能
+   * @param {string} domain
+   * @returns {Promise<{ok: boolean, error?: string}>}
+   */
+  function removeSkill(domain) {
+    if (!domain || typeof domain !== 'string') {
+      return Promise.resolve({ ok: false, error: '缺少 domain 参数' });
+    }
+    return new Promise(function (resolve) {
+      chrome.storage.local.get(['gobySkills'], function (result) {
+        var skills = result.gobySkills || {};
+        if (!skills[domain]) {
+          resolve({ ok: false, error: '技能 "' + domain + '" 不存在' });
+          return;
+        }
+        delete skills[domain];
+        chrome.storage.local.set({ gobySkills: skills }, function () {
+          resolve({ ok: true });
+        });
+      });
+    });
+  }
+
+  // ================================================================
   //  工具执行引擎 (GOBY_DESIGN.md §十六)
   // ================================================================
 
