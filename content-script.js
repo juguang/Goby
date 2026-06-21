@@ -1720,7 +1720,28 @@
             workflow_id: window.__gobyWorkflowId,
             summary: summary
           }).then(function (response) {
-            resolve(String(response));
+            // Phase 8 fix (260621-kKk): 解析 SW 响应而非粗暴 String()
+            //   SW handler 可能返回：
+            //   - 字符串（如 '已结束 workflow xxx'）→ 直传
+            //   - {ok:true} → 给成功消息
+            //   - {ok:false, error:'...'} → 给 'Error: <error>' 字符串
+            //     让 executeWithTimeout (line 2685) 识别并触发重试或上报
+            //   之前 String({ok:false,...}) = "[object Object]" 不以 Error: 开头，
+            //   被误判为成功，worker AI 看不懂反复调，3 次后 "已跳过" × 2，chat Tab 永久卡死
+            if (typeof response === 'string') {
+              resolve(response);
+            } else if (response && typeof response === 'object') {
+              if (response.ok) {
+                resolve('Workflow ' + window.__gobyWorkflowId + ' 已结束，summary 已发送给 chat Tab');
+              } else {
+                resolve('Error: ' + (response.error || 'SW 拒绝 finish_workflow（未知原因）'));
+              }
+            } else {
+              resolve('Error: SW 响应格式异常 — ' + String(response));
+            }
+          }).catch(function (err) {
+            // .catch 兜底 — sendToSW 设计上永不 reject，但保险（防 unhandled rejection 卡住 Promise）
+            resolve('Error: sendToSW 失败 - ' + (err && err.message || err));
           });
         });
       }
