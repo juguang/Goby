@@ -962,9 +962,12 @@
 
     function refreshRecommendedList() {
       var recList = document.getElementById('goby-recommended-list');
+      console.log('[skills] refreshRecommendedList called, recList:', recList);
       if (!recList) return;
 
       window.GobyAgent.listSkills().then(function (installedSkills) {
+        console.log('[skills] listSkills returned:', installedSkills);
+        console.log('[skills] RECOMMENDED_SKILLS:', RECOMMENDED_SKILLS);
         recList.innerHTML = '';
         for (var i = 0; i < RECOMMENDED_SKILLS.length; i++) {
           var rec = RECOMMENDED_SKILLS[i];
