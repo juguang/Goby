@@ -725,6 +725,9 @@
   var _streamReject = null;        // callLLMStream Promise reject
   var _toolCallFailCounts = {};    // 工具失败计数（同会话内持久）
 
+  // ---- 动态技能工具 (Plan 09-02) ----
+  var _activeSkillTools = [];
+
   // ---- 常量定义（AGENT-05 限制参数） ----
   var MAX_LOOPS = 50;
   var MAX_TOOL_CALLS = 50;
@@ -1776,9 +1779,20 @@
 
   // 动态拼接 SYSTEM_PROMPT 的可用工具列表 — 与 nativeTools 数组完全同步，避免漂移
   // 工具列表行（由 getSystemPrompt 动态追加，不污染常量）
-  var toolListLines = nativeTools.map(function (t) {
-    return '- ' + t.function.name + ': ' + t.function.description;
-  }).join('\n');
+
+  /**
+   * _buildToolListLines — 构建当前所有可用工具的列表行（含已注册技能工具）
+   * @returns {string}
+   */
+  function _buildToolListLines() {
+    var allTools = nativeTools.concat(_activeSkillTools);
+    return allTools.map(function (t) {
+      return '- ' + t.function.name + ': ' + t.function.description;
+    }).join('\n');
+  }
+
+  // 静态后备（getSystemPrompt 会动态重建，此缓存供外部直接引用使用）
+  var toolListLines = _buildToolListLines();
 
   /**
    * getSystemPrompt — 返回完整系统提示词（当前语言的 base + 工具列表）
@@ -1788,7 +1802,7 @@
     var basePrompt = (window.GobyI18n && window.GobyI18n.getSystemPrompt)
       ? window.GobyI18n.getSystemPrompt()
       : '';
-    return basePrompt + toolListLines + '\n';
+    return basePrompt + _buildToolListLines() + '\n';
   }
 
   /**
@@ -2015,8 +2029,9 @@
       // ★ 净化消息格式 — 确保 API 兼容
       var cleanMessages = sanitizeMessages(messages);
 
-      // 构造 tools 参数（使用 nativeTools 的 function schema）
-      var tools = nativeTools.map(function (t) {
+      // 构造 tools 参数（nativeTools + 已注册技能工具）
+      var allTools = nativeTools.concat(_activeSkillTools);
+      var tools = allTools.map(function (t) {
         return { type: 'function', function: t.function };
       });
 
@@ -2756,6 +2771,96 @@
   }
 
   // ================================================================
+  //  Plan 09-02: 动态技能工具注册/注销
+  // ================================================================
+
+  /**
+   * registerSkillTools — 为指定 domain 注册技能工具
+   * 从 gobySkills storage 读取技能 manifest，将每个 action 包装为
+   * nativeTools 兼容的工具定义，追加到 _activeSkillTools 数组
+   *
+   * @param {string} domain - 网站域名 (e.g., "amazon.com")
+   * @returns {Promise<number>} 注册的工具数量
+   */
+  function registerSkillTools(domain) {
+    // 先清除旧技能工具
+    unregisterSkillTools();
+
+    if (!domain || typeof domain !== 'string') {
+      return Promise.resolve(0);
+    }
+
+    return GobyStorage.getSkill(domain).then(function (skill) {
+      if (!skill || !Array.isArray(skill.actions) || skill.actions.length === 0) {
+        return 0;
+      }
+
+      var registered = 0;
+      for (var i = 0; i < skill.actions.length; i++) {
+        var action = skill.actions[i];
+        if (!action.name || typeof action.execute !== 'function') {
+          continue;
+        }
+
+        // 将 browsing-skills 格式的结果转换为 agent loop 兼容的字符串
+        var actionName = action.name;
+        var actionExecute = action.execute;
+
+        var toolDef = {
+          type: 'function',
+          function: {
+            name: actionName,
+            description: action.description || '',
+            parameters: action.inputSchema || { type: 'object', properties: {} }
+          },
+          timeout: 30000,
+          execute: function (params) {
+            try {
+              var result = actionExecute(params);
+              // browsing-skills 标准返回格式: { content: [{ type: "text", text: "..." }] }
+              if (result && Array.isArray(result.content)) {
+                var texts = [];
+                for (var ci = 0; ci < result.content.length; ci++) {
+                  if (result.content[ci] && typeof result.content[ci].text === 'string') {
+                    texts.push(result.content[ci].text);
+                  }
+                }
+                if (texts.length === 1) {
+                  return texts[0];
+                }
+                return JSON.stringify(texts.length > 0 ? texts : result);
+              }
+              // 直接返回字符串或可序列化结果
+              if (typeof result === 'string') {
+                return result;
+              }
+              return JSON.stringify(result);
+            } catch (e) {
+              return 'Error: skill ' + actionName + ' 执行失败 - ' + (e.message || String(e));
+            }
+          }
+        };
+
+        _activeSkillTools.push(toolDef);
+        registered++;
+      }
+
+      return registered;
+    }).catch(function () {
+      // storage 读取失败 — 静默降级
+      unregisterSkillTools();
+      return 0;
+    });
+  }
+
+  /**
+   * unregisterSkillTools — 清除所有已注册的技能工具
+   */
+  function unregisterSkillTools() {
+    _activeSkillTools.length = 0;
+  }
+
+  // ================================================================
   //  工具执行引擎 (GOBY_DESIGN.md §十六)
   // ================================================================
 
@@ -2775,13 +2880,15 @@
       }
     }
 
-    // 在 nativeTools 中查找匹配的工具
+    // 在 nativeTools 和已注册技能工具中查找匹配的工具
     var toolDef = nativeTools.find(function (t) {
+      return t.function.name === toolCall.function.name;
+    }) || _activeSkillTools.find(function (t) {
       return t.function.name === toolCall.function.name;
     });
 
     if (!toolDef) {
-      var availableTools = nativeTools.map(function (t) {
+      var availableTools = nativeTools.concat(_activeSkillTools).map(function (t) {
         return t.function.name;
       }).join(', ');
       // 使用 UnknownTool: 前缀（区别于 Error:），让 executeWithTimeout 能识别"未知工具"
@@ -2809,8 +2916,10 @@
     var toolName = toolCall.function.name;
     var timeout = TOOL_TIMEOUT;
 
-    // 查找工具特定超时
+    // 在 nativeTools 和已注册技能工具中查找工具特定超时
     var toolDef = nativeTools.find(function (t) {
+      return t.function.name === toolName;
+    }) || _activeSkillTools.find(function (t) {
       return t.function.name === toolName;
     });
     if (toolDef && toolDef.timeout) {
@@ -3298,7 +3407,13 @@
     getAllSessions: getAllSessions,
     // 260620-i08: 暴露内部消息状态机函数供 jest 测试访问
     enforceMessageLimit: enforceMessageLimit,
-    sanitizeMessages: sanitizeMessages
+    sanitizeMessages: sanitizeMessages,
+    // Plan 09-02: 技能工具注册
+    _activeSkillTools: _activeSkillTools,
+    registerSkillTools: registerSkillTools,
+    unregisterSkillTools: unregisterSkillTools,
+    _autoRegisterSkills: _autoRegisterSkills,
+    _domainMatchesSkill: _domainMatchesSkill
   };
 
   // 暴露 GobyAgent 到全局
@@ -3336,10 +3451,13 @@
     isStopRequested: function () {
       return _agentState.stopRequested === true;
     },
-    // Skills management (Plan 09-01)
+    // Skills management (Plan 09-01 + 09-02)
     importSkill: importSkill,
     listSkills: listSkills,
     removeSkill: removeSkill,
+    registerSkillTools: registerSkillTools,
+    unregisterSkillTools: unregisterSkillTools,
+    _activeSkillTools: _activeSkillTools,
     getState: function () {
       return {
         messages: _agentState.messages.slice(),
@@ -3453,7 +3571,51 @@
       });
     }).catch(function () {
       // 跨域拉取失败（storage 错误等）— 静默降级，保留 createSession 的空 session
+    }).then(function () {
+      // Plan 09-02: 自动注册当前域名的技能工具
+      _autoRegisterSkills();
     });
+  }
+
+  /**
+   * _autoRegisterSkills — 为当前 hostname 自动注册匹配的技能工具
+   * 支持子域名通配：amazon.com 自动匹配 www.amazon.com
+   */
+  function _autoRegisterSkills() {
+    var hostname = window.location.hostname;
+    if (!hostname) return;
+
+    // 先尝试精确匹配
+    GobyStorage.getSkill(hostname).then(function (skill) {
+      if (skill && Array.isArray(skill.actions) && skill.actions.length > 0) {
+        return registerSkillTools(hostname);
+      }
+      // 尝试子域名通配匹配
+      return GobyStorage.getAllSkills().then(function (allSkills) {
+        var domains = Object.keys(allSkills);
+        for (var i = 0; i < domains.length; i++) {
+          if (_domainMatchesSkill(hostname, domains[i])) {
+            // 使用 skill 存储的 domain 作为 key 注册
+            return registerSkillTools(domains[i]);
+          }
+        }
+        return 0;
+      });
+    }).catch(function () {
+      // storage 读取失败 — 静默降级
+    });
+  }
+
+  /**
+   * _domainMatchesSkill — 检查 hostname 是否匹配 skill domain
+   * 支持子域名通配：amazon.com 匹配 www.amazon.com，但不匹配 notamazon.com
+   * @param {string} host - 当前 hostname (e.g., "www.amazon.com")
+   * @param {string} skillDomain - skill 声明的 domain (e.g., "amazon.com")
+   * @returns {boolean}
+   */
+  function _domainMatchesSkill(host, skillDomain) {
+    if (!host || !skillDomain) return false;
+    return host === skillDomain || host.indexOf('.' + skillDomain, host.length - skillDomain.length - 1) !== -1;
   }
 
   // URL 变化监听 (SESS-01, D-16)
