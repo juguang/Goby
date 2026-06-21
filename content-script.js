@@ -3336,6 +3336,10 @@
     isStopRequested: function () {
       return _agentState.stopRequested === true;
     },
+    // Skills management (Plan 09-01)
+    importSkill: importSkill,
+    listSkills: listSkills,
+    removeSkill: removeSkill,
     getState: function () {
       return {
         messages: _agentState.messages.slice(),
