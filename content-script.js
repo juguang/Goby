@@ -136,18 +136,25 @@
   // ---- Init — 面板默认隐藏，autoStart 控制自动展开 ----
   // Phase 03 UAT 测试 5：先 await GobyPanel.init()，再 initSession()，避免渲染时序竞争
   // （否则 loadSession 完成时面板未就绪，renderWelcome + appendMessage(历史) 被静默跳过）
+  // Plan 09-03: 首次运行预装内置技能（gobySkills 为空时自动注入 5 个技能）
   GobyPanel.init().then(function () {
-    // 面板就绪后再初始化会话（loadSession 才能正确渲染历史消息）
-    initSession();
-    return chrome.storage.local.get(['gobyPanelState']).then(function (result) {
-      var panelState = result.gobyPanelState || {};
-      if (panelState.autoStart) {
-        return GobyPanel.show();
-      }
+    // 先预装内置技能（异步），再初始化会话（确保 _autoRegisterSkills 可见）
+    return _preloadBuiltinSkills().then(function () {
+      // 面板就绪 + 技能就绪后再初始化会话
+      initSession();
+      return chrome.storage.local.get(['gobyPanelState']).then(function (result) {
+        var panelState = result.gobyPanelState || {};
+        if (panelState.autoStart) {
+          return GobyPanel.show();
+        }
+      });
     });
   }).catch(function () {
     // 初始化失败 — 退化到立即初始化会话（无面板渲染）
-    initSession();
+    // 仍尝试预装技能
+    _preloadBuiltinSkills().then(function () {
+      initSession();
+    });
   });
 
   // ==================================================================
@@ -2771,6 +2778,83 @@
   }
 
   // ================================================================
+  //  Plan 09-03: 内置技能首次启动预装
+  // ================================================================
+
+  /**
+   * _preloadBuiltinSkills — 首次运行时将 5 个内置技能写入 gobySkills storage
+   * 仅在 gobySkills 为空时执行（无已安装技能 = 新安装）。
+   * 从扩展自带的 skills/builtin/*.SKILL.md 文件加载，无需网络请求。
+   *
+   * @returns {Promise<void>}
+   */
+  var _builtinPreloaded = false;
+
+  function _preloadBuiltinSkills() {
+    if (_builtinPreloaded) {
+      return Promise.resolve();
+    }
+    _builtinPreloaded = true;
+
+    return GobyStorage.getAllSkills().then(function (allSkills) {
+      var installedDomains = Object.keys(allSkills);
+      if (installedDomains.length > 0) {
+        // 已有已安装技能，跳过预装
+        return;
+      }
+
+      var BUILTIN_SKILLS = [
+        'skills/builtin/amazon.SKILL.md',
+        'skills/builtin/github.SKILL.md',
+        'skills/builtin/google.SKILL.md',
+        'skills/builtin/baidu.SKILL.md',
+        'skills/builtin/wikipedia.SKILL.md'
+      ];
+
+      if (typeof SkillLoader === 'undefined' || !SkillLoader.parseSkillMarkdown) {
+        // SkillLoader 未加载 — 静默降级
+        return;
+      }
+
+      var loadPromises = BUILTIN_SKILLS.map(function (path) {
+        var url = chrome.runtime.getURL(path);
+        return fetch(url).then(function (res) {
+          if (!res.ok) {
+            return undefined;
+          }
+          return res.text();
+        }).then(function (markdown) {
+          if (!markdown) {
+            return undefined;
+          }
+          var parseResult;
+          try {
+            parseResult = SkillLoader.parseSkillMarkdown(markdown);
+          } catch (e) {
+            return undefined;
+          }
+          var validation = SkillLoader.validateSkill(parseResult);
+          if (!validation.valid) {
+            return undefined;
+          }
+          return GobyStorage.saveSkill(validation.skillManifest.domain, {
+            name: validation.skillManifest.name,
+            description: validation.skillManifest.description,
+            domain: validation.skillManifest.domain,
+            actions: validation.skillManifest.actions,
+            source: 'builtin'
+          });
+        }).catch(function () {
+          // 单个文件加载失败不影响其他文件
+          return undefined;
+        });
+      });
+
+      return Promise.all(loadPromises);
+    });
+  }
+
+  // ================================================================
   //  Plan 09-02: 动态技能工具注册/注销
   // ================================================================
 
@@ -3413,7 +3497,9 @@
     registerSkillTools: registerSkillTools,
     unregisterSkillTools: unregisterSkillTools,
     _autoRegisterSkills: _autoRegisterSkills,
-    _domainMatchesSkill: _domainMatchesSkill
+    _domainMatchesSkill: _domainMatchesSkill,
+    // Plan 09-03: 内置技能预装
+    _preloadBuiltinSkills: _preloadBuiltinSkills
   };
 
   // 暴露 GobyAgent 到全局
