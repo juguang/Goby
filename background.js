@@ -570,17 +570,23 @@
     }
 
     // T-05-03: page-screenshot — 通过 captureVisibleTab 截图
+    // Phase 8 fix (260621-eyj): captureVisibleTab 截窗口活动 tab，不是 sender tab。
+    //   worker Tab 调 page_screenshot 时焦点可能已切回 chat Tab（panel 自动展开），
+    //   导致截到 chat Tab 内容。修复：先 chrome.tabs.update active:true 切到 sender
+    //   tab 再截图。不切回——worker Tab 执行 workflow 时本应在前台。
     if (message.action === 'page-screenshot') {
       if (!sender.tab) {
         sendResponse('Error: 无法获取 tabId');
         return true;
       }
-      chrome.tabs.captureVisibleTab(sender.tab.windowId, {format: 'png'}, function (dataUrl) {
-        if (chrome.runtime.lastError) {
-          sendResponse('Error: 截图失败 - ' + chrome.runtime.lastError.message);
-        } else {
-          sendResponse(dataUrl);
-        }
+      chrome.tabs.update(sender.tab.id, { active: true }, function () {
+        chrome.tabs.captureVisibleTab(sender.tab.windowId, {format: 'png'}, function (dataUrl) {
+          if (chrome.runtime.lastError) {
+            sendResponse('Error: 截图失败 - ' + chrome.runtime.lastError.message);
+          } else {
+            sendResponse(dataUrl);
+          }
+        });
       });
       return true; // 异步响应 — 保持 sendResponse 通道
     }
