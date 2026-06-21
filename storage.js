@@ -265,7 +265,8 @@
           domain: skillManifest.domain || domain,
           actions: skillManifest.actions || [],
           installedAt: skillManifest.installedAt || Date.now(),
-          source: skillManifest.source || ''
+          source: skillManifest.source || '',
+          enabled: skillManifest.enabled !== undefined ? skillManifest.enabled : true
         };
         return chrome.storage.local.set({ gobySkills: skills });
       });
@@ -290,6 +291,23 @@
     getAllSkills: function () {
       return chrome.storage.local.get(['gobySkills']).then(function (result) {
         return result.gobySkills || {};
+      });
+    },
+
+    /**
+     * 切换技能的 enabled 状态
+     * @param {string} domain
+     * @param {boolean} enabled
+     * @returns {Promise<boolean>} true 如果更新成功，false 如果技能不存在
+     */
+    toggleSkill: function (domain, enabled) {
+      return chrome.storage.local.get(['gobySkills']).then(function (result) {
+        var skills = result.gobySkills || {};
+        if (!skills[domain]) return false;
+        skills[domain].enabled = enabled;
+        return chrome.storage.local.set({ gobySkills: skills }).then(function () {
+          return true;
+        });
       });
     },
 
