@@ -953,11 +953,11 @@
      * 渲染推荐技能（来自 browsing-skills 注册表）
      */
     var RECOMMENDED_SKILLS = [
-      { name: 'LinkedIn', domain: 'linkedin.com', actions: 2, path: 'linkedin/SKILL.md' },
-      { name: 'Airbnb', domain: 'airbnb.com', actions: 2, path: 'airbnb/SKILL.md' },
-      { name: 'Glassdoor', domain: 'glassdoor.com', actions: 2, path: 'glassdoor/SKILL.md' },
-      { name: 'Booking.com', domain: 'booking.com', actions: 2, path: 'booking/SKILL.md' },
-      { name: 'Zillow', domain: 'zillow.com', actions: 2, path: 'zillow/SKILL.md' }
+      { name: 'LinkedIn', domain: 'linkedin.com', actions: 5, path: 'linkedin.com/SKILL.md' },
+      { name: 'Airbnb', domain: 'airbnb.com', actions: 4, path: 'airbnb.com/SKILL.md' },
+      { name: 'Glassdoor', domain: 'glassdoor.com', actions: 2, path: 'glassdoor.com/SKILL.md' },
+      { name: 'Booking.com', domain: 'booking.com', actions: 4, path: 'booking.com/SKILL.md' },
+      { name: 'Zillow', domain: 'zillow.com', actions: 2, path: 'zillow.com/SKILL.md' }
     ];
 
     function refreshRecommendedList() {
