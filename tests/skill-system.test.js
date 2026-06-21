@@ -1214,3 +1214,289 @@ describe('Skill Tool Registration (Plan 09-02)', function () {
     });
   });
 });
+
+  // =============================================================
+  //  Plan 09-03: Built-in Skills File Validation
+  // =============================================================
+
+  describe('Built-in SKILL.md File Validation (Plan 09-03)', function () {
+    var fs;
+    var path;
+
+    try {
+      fs = require('fs');
+      path = require('path');
+    } catch (e) {
+      // Skip if not available
+    }
+
+    var BUILTIN_NAMES = ['amazon', 'github', 'google', 'baidu', 'wikipedia'];
+    var SKILLS_DIR = path ? path.join(__dirname, '..', 'skills', 'builtin') : null;
+
+    function readBuiltinSkill(name) {
+      if (!fs || !SKILLS_DIR) return null;
+      var filePath = path.join(SKILLS_DIR, name + '.SKILL.md');
+      if (!fs.existsSync(filePath)) return null;
+      var md = fs.readFileSync(filePath, 'utf8');
+      var parseResult = SkillLoader.parseSkillMarkdown(md);
+      var validation = SkillLoader.validateSkill(parseResult);
+      return { parseResult: parseResult, validation: validation };
+    }
+
+    it('all 5 built-in SKILL.md files should exist on disk', function () {
+      if (!fs || !SKILLS_DIR) { pending('File system not available'); return; }
+      BUILTIN_NAMES.forEach(function (name) {
+        var filePath = path.join(SKILLS_DIR, name + '.SKILL.md');
+        expect(fs.existsSync(filePath)).toBe(true);
+      });
+    });
+
+    it('amazon.SKILL.md should parse and validate correctly', function () {
+      var r = readBuiltinSkill('amazon');
+      if (!r) { pending('File not found'); return; }
+      expect(r.validation.valid).toBe(true);
+      expect(r.validation.errors).toEqual([]);
+      expect(r.validation.skillManifest.name).toBe('Amazon Browsing');
+      expect(r.validation.skillManifest.domain).toBe('amazon.com');
+      expect(r.validation.skillManifest.actions).toHaveLength(2);
+      var names = r.validation.skillManifest.actions.map(function (a) { return a.name; });
+      expect(names).toContain('amazon-search');
+      expect(names).toContain('amazon-product');
+      r.validation.skillManifest.actions.forEach(function (action) {
+        expect(action.name).toBeTruthy();
+        expect(action.description).toBeDefined();
+        expect(action.inputSchema).toBeDefined();
+        expect(typeof action.execute).toBe('function');
+      });
+    });
+
+    it('github.SKILL.md should parse and validate correctly', function () {
+      var r = readBuiltinSkill('github');
+      if (!r) { pending('File not found'); return; }
+      expect(r.validation.valid).toBe(true);
+      expect(r.validation.errors).toEqual([]);
+      expect(r.validation.skillManifest.name).toBe('GitHub Browsing');
+      expect(r.validation.skillManifest.domain).toBe('github.com');
+      expect(r.validation.skillManifest.actions).toHaveLength(2);
+      var names = r.validation.skillManifest.actions.map(function (a) { return a.name; });
+      expect(names).toContain('github-repo-info');
+      expect(names).toContain('github-search');
+      r.validation.skillManifest.actions.forEach(function (action) {
+        expect(action.name).toBeTruthy();
+        expect(action.description).toBeDefined();
+        expect(action.inputSchema).toBeDefined();
+        expect(typeof action.execute).toBe('function');
+      });
+    });
+
+    it('google.SKILL.md should parse and validate correctly', function () {
+      var r = readBuiltinSkill('google');
+      if (!r) { pending('File not found'); return; }
+      expect(r.validation.valid).toBe(true);
+      expect(r.validation.errors).toEqual([]);
+      expect(r.validation.skillManifest.name).toBe('Google Search Browsing');
+      expect(r.validation.skillManifest.domain).toBe('google.com');
+      expect(r.validation.skillManifest.actions).toHaveLength(1);
+      expect(r.validation.skillManifest.actions[0].name).toBe('google-search-results');
+      expect(typeof r.validation.skillManifest.actions[0].execute).toBe('function');
+    });
+
+    it('baidu.SKILL.md should parse and validate correctly', function () {
+      var r = readBuiltinSkill('baidu');
+      if (!r) { pending('File not found'); return; }
+      expect(r.validation.valid).toBe(true);
+      expect(r.validation.errors).toEqual([]);
+      expect(r.validation.skillManifest.name).toBe('Baidu Search Browsing');
+      expect(r.validation.skillManifest.domain).toBe('baidu.com');
+      expect(r.validation.skillManifest.actions).toHaveLength(1);
+      expect(r.validation.skillManifest.actions[0].name).toBe('baidu-search-results');
+      expect(typeof r.validation.skillManifest.actions[0].execute).toBe('function');
+    });
+
+    it('wikipedia.SKILL.md should parse and validate correctly', function () {
+      var r = readBuiltinSkill('wikipedia');
+      if (!r) { pending('File not found'); return; }
+      expect(r.validation.valid).toBe(true);
+      expect(r.validation.errors).toEqual([]);
+      expect(r.validation.skillManifest.name).toBe('Wikipedia Browsing');
+      expect(r.validation.skillManifest.domain).toBe('wikipedia.org');
+      expect(r.validation.skillManifest.actions).toHaveLength(2);
+      var names = r.validation.skillManifest.actions.map(function (a) { return a.name; });
+      expect(names).toContain('wikipedia-search');
+      expect(names).toContain('wikipedia-page');
+      r.validation.skillManifest.actions.forEach(function (action) {
+        expect(action.name).toBeTruthy();
+        expect(action.description).toBeDefined();
+        expect(action.inputSchema).toBeDefined();
+        expect(typeof action.execute).toBe('function');
+      });
+    });
+  });
+
+  // =============================================================
+  //  Plan 09-03: Built-in Skills Preload Behavior
+  // =============================================================
+
+  describe('Preload Built-in Skills (Plan 09-03)', function () {
+    var internals;
+    var _raw;
+    var originalFetch;
+
+    /**
+     * Set up full content-script environment.
+     * preSeedSkills: if provided, seeded into gobySkills BEFORE content-script loads.
+     *   - undefined/empty: gobySkills starts empty → preload runs during init
+     *   - { 'example.com': {...} }: pre-seeded → preload skips during init
+     */
+    function setupCSEnv(preSeedSkills) {
+      jest.resetModules();
+
+      var util = require('util');
+      global.TextEncoder = util.TextEncoder;
+      global.TextDecoder = util.TextDecoder;
+
+      require('./__mocks__/chrome.js');
+      _raw = chrome.storage.local._raw;
+
+      // Add getURL to chrome mock (needed by built-in skill preload)
+      if (!chrome.runtime.getURL) {
+        chrome.runtime.getURL = jest.fn(function (relativePath) {
+          return 'chrome-extension://test-id/' + relativePath;
+        });
+      }
+
+      // Pre-seed gobySkills BEFORE content-script loads (controls preload behavior)
+      if (preSeedSkills && Object.keys(preSeedSkills).length > 0) {
+        _raw['gobySkills'] = JSON.parse(JSON.stringify(preSeedSkills));
+      }
+
+      var purifyFactory = require('../lib/purify.min.js');
+      window.DOMPurify = purifyFactory(window);
+
+      window.marked = require('../lib/marked.min.js');
+      require('../lib/i18n.js');
+      require('../storage.js');
+      require('../panel.js');
+
+      // Load content-script.js → init fires → _preloadBuiltinSkills() runs async
+      require('../content-script.js');
+
+      internals = global.__gobyInternals || {};
+    }
+
+    beforeEach(function () {
+      originalFetch = global.fetch;
+
+      var fs = require('fs');
+      var path = require('path');
+      var skillsDir = path.join(__dirname, '..', 'skills', 'builtin');
+
+      global.fetch = jest.fn(function (url) {
+        var fileName = url.split('/').pop();
+        var filePath = path.join(skillsDir, fileName);
+        try {
+          var content = fs.readFileSync(filePath, 'utf8');
+          return Promise.resolve({
+            ok: true,
+            text: function () { return Promise.resolve(content); }
+          });
+        } catch (e) {
+          return Promise.resolve({ ok: false, text: function () { return Promise.resolve(''); } });
+        }
+      });
+    });
+
+    afterEach(function () {
+      global.fetch = originalFetch;
+    });
+
+    /**
+     * Wait for async init preload to settle by polling for gobySkills changes.
+     * Returns a Promise that resolves when storage stops changing.
+     */
+    function waitForPreloadSettle(maxWait) {
+      var timeout = maxWait || 2000;
+      var interval = 50;
+      var start = Date.now();
+      return new Promise(function (resolve) {
+        var prevLen = Object.keys(_raw['gobySkills'] || {}).length;
+        function check() {
+          var currLen = Object.keys(_raw['gobySkills'] || {}).length;
+          if (currLen === prevLen) {
+            resolve();
+          } else {
+            prevLen = currLen;
+            if (Date.now() - start > timeout) {
+              resolve();
+            } else {
+              setTimeout(check, interval);
+            }
+          }
+        }
+        setTimeout(check, interval);
+      });
+    }
+
+    it('should install all 5 built-in skills on first run (empty gobySkills)', function (done) {
+      // Empty storage → preload should install 5 skills during init
+      setupCSEnv();
+
+      waitForPreloadSettle().then(function () {
+        var skills = _raw['gobySkills'] || {};
+        var domains = Object.keys(skills);
+        expect(domains.length).toBeGreaterThanOrEqual(5);
+        expect(domains).toContain('amazon.com');
+        expect(domains).toContain('github.com');
+        expect(domains).toContain('google.com');
+        expect(domains).toContain('baidu.com');
+        expect(domains).toContain('wikipedia.org');
+        domains.forEach(function (domain) {
+          expect(skills[domain].source).toBe('builtin');
+          expect(skills[domain].name).toBeTruthy();
+          expect(Array.isArray(skills[domain].actions)).toBe(true);
+          expect(skills[domain].actions.length).toBeGreaterThan(0);
+        });
+        done();
+      }).catch(done.fail);
+    });
+
+    it('should NOT overwrite existing skills when gobySkills is non-empty', function (done) {
+      // Pre-seed a skill → preload should skip during init
+      var existingSkill = {
+        name: 'Existing Skill',
+        description: 'Already installed',
+        domain: 'example.com',
+        actions: [],
+        source: 'manual',
+        installedAt: Date.now()
+      };
+      setupCSEnv({ 'example.com': existingSkill });
+
+      waitForPreloadSettle().then(function () {
+        var skills = _raw['gobySkills'] || {};
+        var domains = Object.keys(skills);
+        // Should have the existing skill plus possibly built-in ones
+        // (Implementation behavior: preload skips if ANY skill is already installed)
+        expect(domains).toContain('example.com');
+        expect(skills['example.com'].source).toBe('manual');
+        expect(skills['example.com'].name).toBe('Existing Skill');
+        done();
+      }).catch(done.fail);
+    });
+
+    it('should not re-install when _preloadBuiltinSkills is called again', function (done) {
+      setupCSEnv();
+
+      waitForPreloadSettle().then(function () {
+        var firstCount = Object.keys(_raw['gobySkills'] || {}).length;
+        expect(firstCount).toBeGreaterThanOrEqual(5);
+
+        // Call again — should be no-op due to _builtinPreloaded guard
+        internals._preloadBuiltinSkills().then(function () {
+          var secondCount = Object.keys(_raw['gobySkills'] || {}).length;
+          expect(secondCount).toBe(firstCount);
+          done();
+        }).catch(done.fail);
+      }).catch(done.fail);
+    });
+  });

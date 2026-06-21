@@ -2816,41 +2816,39 @@
         return;
       }
 
-      var loadPromises = BUILTIN_SKILLS.map(function (path) {
-        var url = chrome.runtime.getURL(path);
-        return fetch(url).then(function (res) {
-          if (!res.ok) {
-            return undefined;
-          }
-          return res.text();
-        }).then(function (markdown) {
-          if (!markdown) {
-            return undefined;
-          }
-          var parseResult;
-          try {
-            parseResult = SkillLoader.parseSkillMarkdown(markdown);
-          } catch (e) {
-            return undefined;
-          }
-          var validation = SkillLoader.validateSkill(parseResult);
-          if (!validation.valid) {
-            return undefined;
-          }
-          return GobyStorage.saveSkill(validation.skillManifest.domain, {
-            name: validation.skillManifest.name,
-            description: validation.skillManifest.description,
-            domain: validation.skillManifest.domain,
-            actions: validation.skillManifest.actions,
-            source: 'builtin'
+      // 逐个加载技能（顺序处理，避免 chrome.storage.local 竞态条件）
+      var chain = Promise.resolve();
+      for (var s = 0; s < BUILTIN_SKILLS.length; s++) {
+        (function (path) {
+          chain = chain.then(function () {
+            var url = chrome.runtime.getURL(path);
+            return fetch(url).then(function (res) {
+              if (!res.ok) return undefined;
+              return res.text();
+            }).then(function (markdown) {
+              if (!markdown) return undefined;
+              var parseResult;
+              try {
+                parseResult = SkillLoader.parseSkillMarkdown(markdown);
+              } catch (e) {
+                return undefined;
+              }
+              var validation = SkillLoader.validateSkill(parseResult);
+              if (!validation.valid) return undefined;
+              return GobyStorage.saveSkill(validation.skillManifest.domain, {
+                name: validation.skillManifest.name,
+                description: validation.skillManifest.description,
+                domain: validation.skillManifest.domain,
+                actions: validation.skillManifest.actions,
+                source: 'builtin'
+              });
+            }).catch(function () {
+              return undefined;
+            });
           });
-        }).catch(function () {
-          // 单个文件加载失败不影响其他文件
-          return undefined;
-        });
-      });
-
-      return Promise.all(loadPromises);
+        })(BUILTIN_SKILLS[s]);
+      }
+      return chain;
     });
   }
 
