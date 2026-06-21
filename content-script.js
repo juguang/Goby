@@ -3308,11 +3308,24 @@
               window.GobyPanel.appendMessage(panelRole, msg.content);
             }
           }
-          // Phase 8 fix: 如果源 session 是 interrupted 状态（从 page_navigate
-          //   跨域跳过来的），在新 origin 也自动 resume agent loop 继续执行任务。
+          // Phase 8 fix: 跨域 resume — 仅当源 session 是从 page_navigate 中断时
+          //   （非 page_open_tab workflow break）。workflow 中断由 workflow-init
+          //   启动 worker Tab，不靠 D-01 resume。
+          //   区分方式：源 session 最后几条消息中有 '(workflow:' 的是 workflow break，
+          //   不 resume。有 '(navigation started' 的是 navigation break，要 resume。
           if (loaded.interrupted === true &&
               loaded.interruptedAt && Date.now() - loaded.interruptedAt < 60000) {
-            window.GobyAgent.processAgentMessage(null, { resume: true });
+            var isWorkflowBreak = false;
+            for (var wi = loaded.messages.length - 1; wi >= Math.max(0, loaded.messages.length - 5); wi--) {
+              var wm = loaded.messages[wi];
+              if (wm && typeof wm.content === 'string' && wm.content.indexOf('(workflow:') !== -1) {
+                isWorkflowBreak = true;
+                break;
+              }
+            }
+            if (!isWorkflowBreak) {
+              window.GobyAgent.processAgentMessage(null, { resume: true });
+            }
           }
           // 持久化（让 SW 把当前 session 加入 lastActiveSessions 索引）
           saveSession();
