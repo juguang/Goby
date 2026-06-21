@@ -3276,6 +3276,12 @@
               window.GobyPanel.appendMessage(panelRole, msg.content);
             }
           }
+          // Phase 8 fix: 如果源 session 是 interrupted 状态（从 page_navigate
+          //   跨域跳过来的），在新 origin 也自动 resume agent loop 继续执行任务。
+          if (loaded.interrupted === true &&
+              loaded.interruptedAt && Date.now() - loaded.interruptedAt < 60000) {
+            window.GobyAgent.processAgentMessage(null, { resume: true });
+          }
           // 持久化（让 SW 把当前 session 加入 lastActiveSessions 索引）
           saveSession();
           return inherited;
