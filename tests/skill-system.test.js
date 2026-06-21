@@ -730,3 +730,487 @@ describe('Skill System Edge Cases', function () {
     expect(result.actions[0].description).toBe('');
   });
 });
+
+// =============================================================
+//  Plan 09-02: Dynamic Tool Registration & Execution
+// =============================================================
+
+describe('Skill Tool Registration (Plan 09-02)', function () {
+  var internals;
+  var _raw;
+
+  /**
+   * Set up full content-script environment for Plan 09-02 tests.
+   * Must be called in beforeEach because jest config has resetModules: true.
+   */
+  function setupContentScriptEnv() {
+    jest.resetModules();
+
+    // Polyfill TextEncoder/TextDecoder for jsdom
+    var util = require('util');
+    global.TextEncoder = util.TextEncoder;
+    global.TextDecoder = util.TextDecoder;
+
+    // Load chrome mock
+    require('./__mocks__/chrome.js');
+    _raw = chrome.storage.local._raw;
+
+    // DOMPurify factory
+    var purifyFactory = require('../lib/purify.min.js');
+    window.DOMPurify = purifyFactory(window);
+
+    // marked
+    window.marked = require('../lib/marked.min.js');
+
+    // i18n (needed by content-script.js)
+    require('../lib/i18n.js');
+
+    // Load extension modules in manifest order
+    require('../storage.js');
+    require('../panel.js');
+    require('../content-script.js');
+
+    internals = global.__gobyInternals || {};
+  }
+
+  beforeEach(function () {
+    setupContentScriptEnv();
+    // Clear skill tools
+    if (internals.unregisterSkillTools) {
+      internals.unregisterSkillTools();
+    }
+    if (internals._activeSkillTools) {
+      internals._activeSkillTools.length = 0;
+    }
+    // Clear stored skills
+    _raw['gobySkills'] = {};
+    // Reset mock timer state
+    jest.useFakeTimers();
+  });
+
+  afterEach(function () {
+    jest.useRealTimers();
+  });
+
+  // Access mock storage raw data for direct seeding
+  // Helper: populate gobySkills storage with a test skill
+  function seedSkill(domain, actionsOverride) {
+    var actions = actionsOverride || [
+      {
+        name: 'test_search',
+        description: 'Search for products',
+        inputSchema: { type: 'object', properties: { keyword: { type: 'string' } } },
+        execute: function (params) {
+          return { content: [{ type: 'text', text: 'Found: ' + (params.keyword || 'nothing') }] };
+        }
+      },
+      {
+        name: 'test_click',
+        description: 'Click a button',
+        inputSchema: { type: 'object', properties: { id: { type: 'string' } } },
+        execute: function (params) {
+          return { content: [{ type: 'text', text: 'Clicked: ' + (params.id || 'unknown') }] };
+        }
+      }
+    ];
+    var skillManifest = {
+      name: 'Test Skill',
+      description: 'A test skill for domain',
+      domain: domain,
+      actions: actions,
+      installedAt: Date.now(),
+      source: 'https://example.com/skills/test.md'
+    };
+    var existing = _raw['gobySkills'] || {};
+    existing[domain] = skillManifest;
+    _raw['gobySkills'] = existing;
+  }
+
+  function clearSkill(domain) {
+    var existing = _raw['gobySkills'] || {};
+    delete existing[domain];
+    _raw['gobySkills'] = existing;
+  }
+
+  function clearAllSkills() {
+    _raw['gobySkills'] = {};
+  }
+
+  beforeEach(function () {
+    // Clear _activeSkillTools before each test
+    if (internals.unregisterSkillTools) {
+      internals.unregisterSkillTools();
+    }
+    if (internals._activeSkillTools) {
+      internals._activeSkillTools.length = 0;
+    }
+    clearAllSkills();
+  });
+
+  describe('registerSkillTools(domain)', function () {
+    it('should register tools from skill manifest for a domain', function (done) {
+      seedSkill('example.com');
+      internals.registerSkillTools('example.com').then(function (count) {
+        expect(count).toBe(2);
+        var tools = internals._activeSkillTools;
+        expect(tools).toHaveLength(2);
+        expect(tools[0].function.name).toBe('test_search');
+        expect(tools[0].function.description).toBe('Search for products');
+        expect(tools[0].timeout).toBe(30000);
+        expect(tools[0].type).toBe('function');
+        expect(typeof tools[0].execute).toBe('function');
+        expect(tools[1].function.name).toBe('test_click');
+        done();
+      }).catch(done.fail);
+    });
+
+    it('should return 0 when no skill exists for domain', function (done) {
+      internals.registerSkillTools('nonexistent.com').then(function (count) {
+        expect(count).toBe(0);
+        expect(internals._activeSkillTools).toHaveLength(0);
+        done();
+      }).catch(done.fail);
+    });
+
+    it('should return 0 when domain is empty', function (done) {
+      internals.registerSkillTools('').then(function (count) {
+        expect(count).toBe(0);
+        done();
+      }).catch(done.fail);
+    });
+
+    it('should clear previous tools before registering new domain', function (done) {
+      seedSkill('first.com');
+      internals.registerSkillTools('first.com').then(function (count1) {
+        expect(count1).toBe(2);
+        expect(internals._activeSkillTools).toHaveLength(2);
+        // Now register a different domain
+        seedSkill('second.com', [
+          {
+            name: 'second_action',
+            description: 'Second action',
+            inputSchema: {},
+            execute: function () { return 'ok'; }
+          }
+        ]);
+        return internals.registerSkillTools('second.com');
+      }).then(function (count2) {
+        expect(count2).toBe(1);
+        expect(internals._activeSkillTools).toHaveLength(1);
+        expect(internals._activeSkillTools[0].function.name).toBe('second_action');
+        done();
+      }).catch(done.fail);
+    });
+
+    it('should produce correct string result from browsing-skills format', function () {
+      seedSkill('result-test.com', [
+        {
+          name: 'format_test',
+          description: 'Tests format conversion',
+          inputSchema: {},
+          execute: function () {
+            return { content: [{ type: 'text', text: 'hello world' }] };
+          }
+        }
+      ]);
+
+      return internals.registerSkillTools('result-test.com').then(function (count) {
+        expect(count).toBe(1);
+        var tool = internals._activeSkillTools[0];
+        var result = tool.execute({});
+        expect(result).toBe('hello world');
+      });
+    });
+
+    it('should handle multi-item content arrays as JSON string', function () {
+      seedSkill('multi-content.com', [
+        {
+          name: 'multi_test',
+          description: 'Returns multiple content items',
+          inputSchema: {},
+          execute: function () {
+            return {
+              content: [
+                { type: 'text', text: 'First result' },
+                { type: 'text', text: 'Second result' }
+              ]
+            };
+          }
+        }
+      ]);
+
+      return internals.registerSkillTools('multi-content.com').then(function (count) {
+        expect(count).toBe(1);
+        var tool = internals._activeSkillTools[0];
+        var result = tool.execute({});
+        var parsed = JSON.parse(result);
+        expect(parsed).toEqual(['First result', 'Second result']);
+      });
+    });
+
+    it('should handle direct string returns from execute', function () {
+      seedSkill('string-result.com', [
+        {
+          name: 'string_test',
+          description: 'Returns a plain string',
+          inputSchema: {},
+          execute: function () {
+            return 'direct string result';
+          }
+        }
+      ]);
+
+      return internals.registerSkillTools('string-result.com').then(function (count) {
+        expect(count).toBe(1);
+        var tool = internals._activeSkillTools[0];
+        var result = tool.execute({});
+        expect(result).toBe('direct string result');
+      });
+    });
+
+    it('should catch execute errors and return Error: prefix', function () {
+      seedSkill('error-test.com', [
+        {
+          name: 'crash_action',
+          description: 'This action throws',
+          inputSchema: {},
+          execute: function () {
+            throw new Error('something went wrong');
+          }
+        }
+      ]);
+
+      return internals.registerSkillTools('error-test.com').then(function (count) {
+        expect(count).toBe(1);
+        var tool = internals._activeSkillTools[0];
+        var result = tool.execute({});
+        expect(typeof result).toBe('string');
+        expect(result.indexOf('Error: skill crash_action 执行失败')).toBe(0);
+      });
+    });
+
+    it('should skip actions without execute function', function () {
+      seedSkill('bad-action.com', [
+        {
+          name: 'bad_action',
+          description: 'No execute',
+          inputSchema: {}
+          // intentionally missing execute
+        },
+        {
+          name: 'good_action',
+          description: 'Has execute',
+          inputSchema: {},
+          execute: function () { return 'works'; }
+        }
+      ]);
+
+      return internals.registerSkillTools('bad-action.com').then(function (count) {
+        expect(count).toBe(1);
+        expect(internals._activeSkillTools[0].function.name).toBe('good_action');
+      });
+    });
+  });
+
+  describe('unregisterSkillTools()', function () {
+    it('should clear all registered skill tools', function (done) {
+      seedSkill('clear-test.com');
+      internals.registerSkillTools('clear-test.com').then(function (count) {
+        expect(count).toBe(2);
+        expect(internals._activeSkillTools).toHaveLength(2);
+        internals.unregisterSkillTools();
+        expect(internals._activeSkillTools).toHaveLength(0);
+        done();
+      }).catch(done.fail);
+    });
+
+    it('should be safe to call when no tools are registered', function () {
+      expect(internals._activeSkillTools).toHaveLength(0);
+      internals.unregisterSkillTools();
+      expect(internals._activeSkillTools).toHaveLength(0);
+    });
+  });
+
+  describe('Domain matching (_domainMatchesSkill)', function () {
+    it('should match exact domain', function () {
+      expect(internals._domainMatchesSkill('amazon.com', 'amazon.com')).toBe(true);
+    });
+
+    it('should match subdomain (www.amazon.com matches amazon.com)', function () {
+      expect(internals._domainMatchesSkill('www.amazon.com', 'amazon.com')).toBe(true);
+    });
+
+    it('should match deep subdomain (a.b.amazon.com matches amazon.com)', function () {
+      expect(internals._domainMatchesSkill('a.b.amazon.com', 'amazon.com')).toBe(true);
+    });
+
+    it('should NOT match partial domain suffix (notamazon.com does not match amazon.com)', function () {
+      expect(internals._domainMatchesSkill('notamazon.com', 'amazon.com')).toBe(false);
+    });
+
+    it('should NOT match when host is shorter than domain', function () {
+      expect(internals._domainMatchesSkill('com', 'amazon.com')).toBe(false);
+    });
+
+    it('should return false for empty inputs', function () {
+      expect(internals._domainMatchesSkill('', 'amazon.com')).toBe(false);
+      expect(internals._domainMatchesSkill('amazon.com', '')).toBe(false);
+      expect(internals._domainMatchesSkill('', '')).toBe(false);
+    });
+  });
+
+  describe('Auto-register on domain match (_autoRegisterSkills)', function () {
+    it('should auto-register when skill exists for current hostname (localhost in jsdom)', function (done) {
+      jest.useRealTimers();
+      seedSkill('localhost');
+      internals._autoRegisterSkills();
+
+      // Wait for async storage.get -> registerSkillTools chain
+      setTimeout(function () {
+        expect(internals._activeSkillTools.length).toBeGreaterThan(0);
+        expect(internals._activeSkillTools[0].function.name).toBe('test_search');
+        done();
+      }, 100);
+    });
+
+    it('should not register any tools when no skill matches', function (done) {
+      jest.useRealTimers();
+      clearAllSkills();
+      internals._autoRegisterSkills();
+
+      setTimeout(function () {
+        expect(internals._activeSkillTools).toHaveLength(0);
+        done();
+      }, 100);
+    });
+
+    it('should not crash when storage is empty', function () {
+      clearAllSkills();
+      expect(function () {
+        internals._autoRegisterSkills();
+      }).not.toThrow();
+    });
+  });
+
+  describe('Skill tool execution format', function () {
+    it('should convert browsing-skills { content: [{text}] } to string', function () {
+      seedSkill('fmt-test.com', [
+        {
+          name: 'fmt_action',
+          description: 'Format test',
+          inputSchema: { type: 'object', properties: { query: { type: 'string' } } },
+          execute: function (params) {
+            return { content: [{ type: 'text', text: 'Result for: ' + (params.query || 'all') }] };
+          }
+        }
+      ]);
+
+      return internals.registerSkillTools('fmt-test.com').then(function (count) {
+        expect(count).toBe(1);
+        var tool = internals._activeSkillTools[0];
+        var result = tool.execute({ query: 'laptop' });
+        expect(result).toBe('Result for: laptop');
+      });
+    });
+
+    it('should preserve structured data via JSON.stringify for complex results', function () {
+      seedSkill('complex-test.com', [
+        {
+          name: 'complex_action',
+          description: 'Returns complex data',
+          inputSchema: {},
+          execute: function () {
+            return {
+              content: [
+                { type: 'text', text: 'Product: MacBook' },
+                { type: 'text', text: 'Price: $999' }
+              ]
+            };
+          }
+        }
+      ]);
+
+      return internals.registerSkillTools('complex-test.com').then(function (count) {
+        expect(count).toBe(1);
+        var tool = internals._activeSkillTools[0];
+        var result = tool.execute({});
+        var parsed = JSON.parse(result);
+        expect(Array.isArray(parsed)).toBe(true);
+        expect(parsed[0]).toBe('Product: MacBook');
+        expect(parsed[1]).toBe('Price: $999');
+      });
+    });
+
+    it('should JSON.stringify non-string non-content results', function () {
+      seedSkill('object-test.com', [
+        {
+          name: 'obj_action',
+          description: 'Returns raw object',
+          inputSchema: {},
+          execute: function () {
+            return { count: 42, items: ['a', 'b'] };
+          }
+        }
+      ]);
+
+      return internals.registerSkillTools('object-test.com').then(function (count) {
+        expect(count).toBe(1);
+        var tool = internals._activeSkillTools[0];
+        var result = tool.execute({});
+        var parsed = JSON.parse(result);
+        expect(parsed.count).toBe(42);
+        expect(parsed.items).toEqual(['a', 'b']);
+      });
+    });
+  });
+
+  describe('Error handling', function () {
+    it('should return Error: string when execute throws synchronously', function () {
+      seedSkill('throw-test.com', [
+        {
+          name: 'thrower',
+          description: 'Always throws',
+          inputSchema: {},
+          execute: function () {
+            throw new Error('intentional crash');
+          }
+        }
+      ]);
+
+      return internals.registerSkillTools('throw-test.com').then(function (count) {
+        expect(count).toBe(1);
+        var result = internals._activeSkillTools[0].execute({});
+        expect(result).toMatch(/^Error: skill thrower 执行失败/);
+      });
+    });
+
+    it('should gracefully handle storage read failures', function (done) {
+      // Temporarily break chrome.storage.local.get
+      var originalGet = chrome.storage.local.get;
+      chrome.storage.local.get = jest.fn(function () {
+        return Promise.reject(new Error('storage unavailable'));
+      });
+
+      internals.registerSkillTools('any-domain.com').then(function (count) {
+        expect(count).toBe(0);
+        expect(internals._activeSkillTools).toHaveLength(0);
+        // Restore
+        chrome.storage.local.get = originalGet;
+        done();
+      }).catch(function () {
+        // Restore on failure too
+        chrome.storage.local.get = originalGet;
+        done.fail(new Error('registerSkillTools should resolve, not reject'));
+      });
+    });
+
+    it('should skip skill with empty actions array', function (done) {
+      seedSkill('empty-actions.com', []);
+      internals.registerSkillTools('empty-actions.com').then(function (count) {
+        expect(count).toBe(0);
+        expect(internals._activeSkillTools).toHaveLength(0);
+        done();
+      }).catch(done.fail);
+    });
+  });
+});
