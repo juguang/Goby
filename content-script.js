@@ -46,6 +46,10 @@
     // 新 session 的第一次 processAgentMessage 调用（不复用 resume 标记，避免误触发续跑）
     if (message.action === 'workflow-init') {
       window.__gobyWorkflowId = message.workflow_id;
+      // Phase 8 fix (260621-gKz): 重置 messages 数组，避免同一 worker Tab 多次
+      // workflow 启动（如用户连续 page_open_tab）时累积旧 messages 导致顺序错位
+      // 触发 HTTP 400（tool message 在 assistant.tool_calls 之前）
+      _agentState.messages = [];
       // push inherited messages（chat Tab 最后 5 条，让工作 Tab 有上下文）
       if (Array.isArray(message.inherited_messages)) {
         for (var ii = 0; ii < message.inherited_messages.length; ii++) {
@@ -1849,30 +1853,37 @@
     //
     // 关键约束：循环变量必须用 si/sm/sTi/sTcs（第一遍）和 di/dm（第二遍），
     // 不能复用外层 i/m/ti（外层第 1489/1490/1507 行已用），否则污染现有循环状态。
-    var knownToolCallIds = {};
-    for (var si = 0; si < clean.length; si++) {
-      var sm = clean[si];
-      if (sm.role === 'assistant' && sm.tool_calls) {
-        var sTcs = Array.isArray(sm.tool_calls) ? sm.tool_calls : [];
-        for (var sTi = 0; sTi < sTcs.length; sTi++) {
-          if (sTcs[sTi].id) {
-            knownToolCallIds[sTcs[sTi].id] = true;
-          }
-        }
-      }
-    }
+    //
+    // Phase 8 fix (260621-gKz): 顺序敏感检查。OpenAI API 要求 tool message 必须出现在
+    // 对应的 assistant.tool_calls **之后**，仅查 knownToolCallIds 字典不够（字典只验存在性
+    // 不验顺序）。改为扫描时维护 "已见 tool_call_ids" 集合，tool message 出现时检查其
+    // tool_call_id 是否已见过（即前面已有对应的 assistant.tool_calls），否则移除。
     var deduped = [];
+    var seenToolCallIds = {};
     for (var di = 0; di < clean.length; di++) {
       var dm = clean[di];
-      if (dm.role === 'tool' && dm.tool_call_id && !knownToolCallIds[dm.tool_call_id]) {
-        // 孤立 tool：配对的 assistant.tool_calls 不存在 → 跳过
-        continue;
+      if (dm.role === 'assistant' && dm.tool_calls) {
+        // 登记 tool_call_id 到已见集合
+        var dmTcs = Array.isArray(dm.tool_calls) ? dm.tool_calls : [];
+        for (var dmTi = 0; dmTi < dmTcs.length; dmTi++) {
+          if (dmTcs[dmTi].id) {
+            seenToolCallIds[dmTcs[dmTi].id] = true;
+          }
+        }
+        deduped.push(dm);
+      } else if (dm.role === 'tool') {
+        if (!dm.tool_call_id) {
+          // 损坏数据：tool 没有 tool_call_id → 跳过
+          continue;
+        }
+        if (!seenToolCallIds[dm.tool_call_id]) {
+          // 顺序错位或孤立：tool 出现在对应 assistant.tool_calls 之前 → 跳过
+          continue;
+        }
+        deduped.push(dm);
+      } else {
+        deduped.push(dm);
       }
-      if (dm.role === 'tool' && !dm.tool_call_id) {
-        // 损坏数据：tool 没有 tool_call_id → 跳过
-        continue;
-      }
-      deduped.push(dm);
     }
     clean = deduped;
 
