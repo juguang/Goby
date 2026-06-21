@@ -687,17 +687,49 @@
     // ============================================================
 
     // NAV-01, D-04: tab-navigate — chrome.tabs.update 当前标签页
+    // Phase 8 fix: 导航前 SW 先把 sender origin 的 session 标记为 interrupted=true。
+    //   之前依赖 CS 的 saveSession()（异步，导航期间 CS 可能已被 kill，interrupted
+    //   没来得及写入 storage）→ 新页面 loadSession 读不到 interrupted → 不 resume。
+    //   SW 单线程执行：标记 interrupted → tabs.update → 新页面一定能读到 interrupted。
     if (message.action === 'tab-navigate') {
       if (!sender.tab) {
         sendResponse('Error: 无法获取 tabId');
         return true;
       }
-      chrome.tabs.update(sender.tab.id, { url: message.url }, function () {
-        if (chrome.runtime.lastError) {
-          sendResponse('Error: 导航失败 - ' + chrome.runtime.lastError.message);
-        } else {
-          sendResponse('已导航到: ' + message.url);
-        }
+      // 解析 sender origin
+      var navigateOrigin;
+      try { navigateOrigin = new URL(sender.tab.url).origin; } catch (e) { navigateOrigin = ''; }
+      // 标记当前 session 为 interrupted
+      var markPromise = navigateOrigin
+        ? chrome.storage.local.get('gobySessions').then(function (result) {
+            var sessions = result.gobySessions || {};
+            var keys = Object.keys(sessions);
+            // 找该 origin 的**最新** session（按 updatedAt 降序）
+            var matchedKey = null;
+            var matchedUpdatedAt = 0;
+            for (var ki = 0; ki < keys.length; ki++) {
+              var s = sessions[keys[ki]];
+              if (s.origin === navigateOrigin && (s.updatedAt || 0) >= matchedUpdatedAt) {
+                matchedKey = keys[ki];
+                matchedUpdatedAt = s.updatedAt || 0;
+              }
+            }
+            if (matchedKey) {
+              sessions[matchedKey].interrupted = true;
+              sessions[matchedKey].interruptedAt = Date.now();
+              return chrome.storage.local.set({ gobySessions: sessions });
+            }
+          }).catch(function () { /* 静默降级 */ })
+        : Promise.resolve();
+      // 标记完成后才导航
+      markPromise.then(function () {
+        chrome.tabs.update(sender.tab.id, { url: message.url }, function () {
+          if (chrome.runtime.lastError) {
+            sendResponse('Error: 导航失败 - ' + chrome.runtime.lastError.message);
+          } else {
+            sendResponse('已导航到: ' + message.url);
+          }
+        });
       });
       return true; // 异步响应
     }

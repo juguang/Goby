@@ -2979,10 +2979,12 @@
         // 通过 window.GobyAgent.saveSession 调用 — 测试可 spy（Plan 03-03 既定模式）
         // 注意：workflow break 仍调 saveSession（持久化当前工具结果），但 workflow 模式
         // 不依赖 interrupted=true 续跑（chat Tab 等 onMessage workflow_complete 触发 resume）
-        window.GobyAgent.saveSession();
+        // Phase 8 fix: await saveSession() 确保 interrupted=true 写入 storage 后才 break。
+        //   之前不 await，导航期间 CS 可能被杀，storage 写入来不及 → 新页面读不到
+        //   interrupted → 不 resume。SW 侧也有标记（tab-navigate handler），双保险。
+        await window.GobyAgent.saveSession();
 
         if (navStarted) {
-          // saveSession 已标记 interrupted=true，新 page 自动续跑
           break;
         }
         if (workflowStarted) {
