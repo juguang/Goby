@@ -2262,6 +2262,10 @@
     _agentState.messages = [{ role: 'system', content: getSystemPrompt() }];
     _agentState.sessionId = sessionId;
     _agentState.activeOrigin = origin;
+    // 重置会话级计数器（新建会话=全新开始，不受旧会话限制）
+    _agentState.toolCallCounter = 0;
+    _agentState.roundCount = 0;
+    _agentState.isProcessing = false;
 
     // 重置 UI：先清空旧的聊天气泡（含遗留工具调用），再显示欢迎消息
     if (window.GobyPanel) {
