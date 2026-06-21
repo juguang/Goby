@@ -2760,6 +2760,30 @@
         (panelContent.startsWith('Error:') || panelContent.startsWith('UnknownTool:'));
       GobyPanel.appendMessage(isError ? 'tool-error' : 'tool', panelContent);
     }
+
+    // Phase 8 / NAV-08 / D-11: worker Tab 增量转发 — 每轮工具完成后自动发
+    //   workflow-progress 经 SW 中转到 chat Tab。在 pushResultsToMessages 内
+    //   做是通用 hook：任何调用者（agent loop / 外部工具）都自动获得转发能力，
+    //   不硬编码在 agent loop 特定位置。
+    if (window.__gobyWorkflowId && results.length > 0) {
+      var progressParts = [];
+      for (var pi = 0; pi < results.length; pi++) {
+        var pr = results[pi];
+        if (pr && pr.name) {
+          var shortContent = typeof pr.content === 'string' ? pr.content.substring(0, 150) : '';
+          progressParts.push(pr.name + ': ' + shortContent);
+        }
+      }
+      if (progressParts.length > 0) {
+        try {
+          sendToSW('workflow-progress', {
+            action: 'workflow-progress',
+            workflow_id: window.__gobyWorkflowId,
+            data: { content: progressParts.join('\n') }
+          });
+        } catch (e) { /* 静默降级 — 不阻塞 agent loop */ }
+      }
+    }
   }
 
   // ================================================================
