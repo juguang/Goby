@@ -711,6 +711,11 @@
   var MAX_TOOL_CALLS = 50;
   var MAX_MESSAGES = 20;           // 不含 system prompt
   var TOKEN_LIMIT = 180000;
+  // Phase 8 fix (260621-mKk): worker Tab 模式 MAX_LOOPS 提高到 50
+  //   chat Tab 对话通常简单（用户问答为主），15 轮足够；worker Tab 执行复杂任务
+  //   （如 SERP 提取、多步表单填写）常需 20+ 轮工具调用。统一提高 MAX_LOOPS 会
+  //   让 chat Tab 跑飞时也耗 token，所以分离常量。
+  var WORKER_MAX_LOOPS = 50;
   var TOOL_TIMEOUT = 15000;
 
   // ---- SYSTEM_PROMPT (AGENT-04, D-07) ----
@@ -2792,12 +2797,21 @@
       // Phase 03 UAT 测试 4：会话累计轮数（不在末尾重置）
       _agentState.roundCount++;
       GobyPanel.updateRoundCount(_agentState.roundCount);
+    } else if (isWorkflowInit) {
+      // Phase 8 fix (260621-mKk): worker Tab isWorkflowInit 启动时 initial_user_message
+      //   等价于用户第一条消息，必须自增 roundCount + updateRoundCount，否则状态栏永远显示"第 0 轮"
+      //   （workflow-init listener 已 push initial_user_message，此处只补 roundCount）
+      _agentState.roundCount++;
+      GobyPanel.updateRoundCount(_agentState.roundCount);
     }
 
     var loopCount = 0;
     var loopExitedByLimit = false;
+    // Phase 8 fix (260621-mKk): worker Tab 模式用 WORKER_MAX_LOOPS=50，
+    //   chat Tab 用 MAX_LOOPS=15
+    var effectiveMaxLoops = window.__gobyWorkflowId ? WORKER_MAX_LOOPS : MAX_LOOPS;
 
-    while (loopCount < MAX_LOOPS) {
+    while (loopCount < effectiveMaxLoops) {
       // 消息数量限制
       enforceMessageLimit();
 
@@ -2940,8 +2954,8 @@
         loopCount++;
 
         // 检查是否达到最大轮数
-        if (loopCount >= MAX_LOOPS) {
-          var limitMsg = '无法完成请求：已达到最大对话轮数（' + MAX_LOOPS + '轮）。请尝试简化指令或分步执行。';
+        if (loopCount >= effectiveMaxLoops) {
+          var limitMsg = '无法完成请求：已达到最大对话轮数（' + effectiveMaxLoops + '轮）。请尝试简化指令或分步执行。';
           _agentState.messages.push({ role: 'assistant', content: limitMsg });
           GobyPanel.appendMessage('bot', limitMsg);
           loopExitedByLimit = true;
@@ -2955,7 +2969,7 @@
               sendToSW('page-finish-workflow', {
                 action: 'page-finish-workflow',
                 workflow_id: window.__gobyWorkflowId,
-                summary: '⚠️ Worker Tab 达到 MAX_LOOPS=' + MAX_LOOPS + ' 轮被强制停止，任务未完成。建议简化任务或拆分多步。'
+                summary: '⚠️ Worker Tab 达到 MAX_LOOPS=' + effectiveMaxLoops + ' 轮被强制停止，任务未完成。建议简化任务或拆分多步。'
               });
             } catch (e) { /* 静默降级 — 不阻塞 break */ }
           }
