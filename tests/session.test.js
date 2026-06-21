@@ -585,6 +585,18 @@ describe('Session Sidebar UI', function () {
     sessions['session_y'] = createMockSession('https://y.com', 200, 'Y消息', 2);
     await chrome.storage.local.set({ gobySessions: sessions });
 
+    // Mock sendToSW — delete-all-sessions 委托 SW 执行 storage.remove
+    // 测试环境无 SW，需在 mock 里直接操作 storage
+    var origSendMessage = chrome.runtime.sendMessage.getMockImplementation();
+    chrome.runtime.sendMessage.mockImplementation(function (msg) {
+      if (msg && msg.action === 'delete-all-sessions') {
+        return chrome.storage.local.remove('gobySessions').then(function () {
+          return { ok: true };
+        });
+      }
+      return Promise.resolve(undefined);
+    });
+
     // Mock confirm
     var originalConfirm = window.confirm;
     window.confirm = jest.fn().mockReturnValue(true);
@@ -610,6 +622,8 @@ describe('Session Sidebar UI', function () {
     expect(Object.keys(remaining).length).toBe(0);
 
     window.confirm = originalConfirm;
+    // Restore sendMessage mock — beforeEach resets, but explicit restore is safer
+    chrome.runtime.sendMessage.mockResolvedValue(undefined);
   });
 
   // ---------------------------------------------------------------

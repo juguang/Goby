@@ -937,6 +937,30 @@
       return true; // 异步响应
     }
 
+    // Phase 8 fix: delete-all-sessions — CS 委托 SW 执行全清 + 广播所有 tab
+    //   直接 chrome.storage.local.remove 在单个 tab 的 CS 里执行会导致其他
+    //   tab 的 saveSession 把各自内存 session 重新写回 storage（"活尸"复活）。
+    //   SW 单线程执行保证无竞态；tabs.query + sendMessage 广播保证所有 tab
+    //   同步重置本地 _agentState。
+    if (message.action === 'delete-all-sessions') {
+      chrome.storage.local.remove('gobySessions').then(function () {
+        // 广播 sessions-deleted 给所有 tab
+        chrome.tabs.query({}, function (tabs) {
+          for (var ti = 0; ti < tabs.length; ti++) {
+            try {
+              chrome.tabs.sendMessage(tabs[ti].id, { action: 'sessions-deleted' }, function () {
+                void chrome.runtime.lastError; // 静默忽略未注入 CS 的 tab
+              });
+            } catch (e) { /* tab 不存在或 CS 未注入 — 跳过 */ }
+          }
+        });
+        sendResponse({ ok: true });
+      }).catch(function (err) {
+        sendResponse({ ok: false, error: 'storage.remove 失败 — ' + (err && err.message || err) });
+      });
+      return true; // 异步响应
+    }
+
     return false;
   });
 

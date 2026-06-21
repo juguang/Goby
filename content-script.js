@@ -112,6 +112,21 @@
       return false;
     }
 
+    // Phase 8 fix: sessions-deleted — SW 广播，通知所有 tab 重置本地状态
+    //   deleteAllSessions 委托 SW 执行后，SW 广播此消息给所有 tab。
+    //   每个 content-script 重置 _agentState 并创建新 session，
+    //   而不是只靠发起清除的 tab 自己做。
+    if (message.action === 'sessions-deleted') {
+      _agentState.messages = [];
+      _agentState.isProcessing = false;
+      _agentState.roundCount = 0;
+      GobyPanel.updateRoundCount(0);
+      if (window.GobyPanel && typeof window.GobyPanel.refreshSessionSidebar === 'function') {
+        window.GobyPanel.refreshSessionSidebar();
+      }
+      return false;
+    }
+
     return false;
   });
 
@@ -2544,7 +2559,13 @@
    * @returns {Promise<void>}
    */
   function deleteAllSessions() {
-    return chrome.storage.local.remove('gobySessions').then(function () {
+    // Phase 8 fix: 委托 SW 执行删除 + 广播。直接 chrome.storage.local.remove
+    //   只能清当前 tab 视角的 storage，其他 tab 的 saveSession（自动保存）会把
+    //   各自内存里的 session 重新写回 storage，导致"活尸"复活、用户需多次清除。
+    //   SW 单线程保证无竞态，广播保证所有 tab 同步重置本地状态。
+    return sendToSW('delete-all-sessions', {
+      action: 'delete-all-sessions'
+    }).then(function () {
       var origin = _agentState.activeOrigin || window.location.origin;
       createSession(origin);
     });
