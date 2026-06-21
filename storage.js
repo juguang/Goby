@@ -246,6 +246,85 @@
           model: ''
         };
       });
+    },
+
+    // ---- Skills 管理 (Plan 09-01) ----
+
+    /**
+     * 保存一个 Skill Manifest（按 domain 索引到 gobySkills 键）
+     * @param {string} domain - 技能适用的域名（如 'amazon.com'）
+     * @param {{name: string, description: string, domain: string, actions: Array}} skillManifest
+     * @returns {Promise<void>}
+     */
+    saveSkill: function (domain, skillManifest) {
+      return chrome.storage.local.get(['gobySkills']).then(function (result) {
+        var skills = result.gobySkills || {};
+        skills[domain] = {
+          name: skillManifest.name || '',
+          description: skillManifest.description || '',
+          domain: skillManifest.domain || domain,
+          actions: skillManifest.actions || [],
+          installedAt: skillManifest.installedAt || Date.now(),
+          source: skillManifest.source || '',
+          enabled: skillManifest.enabled !== undefined ? skillManifest.enabled : true
+        };
+        return chrome.storage.local.set({ gobySkills: skills });
+      });
+    },
+
+    /**
+     * 按 domain 获取单个技能
+     * @param {string} domain
+     * @returns {Promise<Object|null>}
+     */
+    getSkill: function (domain) {
+      return chrome.storage.local.get(['gobySkills']).then(function (result) {
+        var skills = result.gobySkills || {};
+        return skills[domain] || null;
+      });
+    },
+
+    /**
+     * 获取所有已安装技能
+     * @returns {Promise<Object>} { domain: skillManifest, ... }
+     */
+    getAllSkills: function () {
+      return chrome.storage.local.get(['gobySkills']).then(function (result) {
+        return result.gobySkills || {};
+      });
+    },
+
+    /**
+     * 切换技能的 enabled 状态
+     * @param {string} domain
+     * @param {boolean} enabled
+     * @returns {Promise<boolean>} true 如果更新成功，false 如果技能不存在
+     */
+    toggleSkill: function (domain, enabled) {
+      return chrome.storage.local.get(['gobySkills']).then(function (result) {
+        var skills = result.gobySkills || {};
+        if (!skills[domain]) return false;
+        skills[domain].enabled = enabled;
+        return chrome.storage.local.set({ gobySkills: skills }).then(function () {
+          return true;
+        });
+      });
+    },
+
+    /**
+     * 按 domain 删除技能
+     * @param {string} domain
+     * @returns {Promise<boolean>} true 如果删除成功，false 如果技能不存在
+     */
+    deleteSkill: function (domain) {
+      return chrome.storage.local.get(['gobySkills']).then(function (result) {
+        var skills = result.gobySkills || {};
+        if (!skills[domain]) return false;
+        delete skills[domain];
+        return chrome.storage.local.set({ gobySkills: skills }).then(function () {
+          return true;
+        });
+      });
     }
   };
 

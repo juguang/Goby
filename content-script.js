@@ -136,18 +136,25 @@
   // ---- Init — 面板默认隐藏，autoStart 控制自动展开 ----
   // Phase 03 UAT 测试 5：先 await GobyPanel.init()，再 initSession()，避免渲染时序竞争
   // （否则 loadSession 完成时面板未就绪，renderWelcome + appendMessage(历史) 被静默跳过）
+  // Plan 09-03: 首次运行预装内置技能（gobySkills 为空时自动注入 5 个技能）
   GobyPanel.init().then(function () {
-    // 面板就绪后再初始化会话（loadSession 才能正确渲染历史消息）
-    initSession();
-    return chrome.storage.local.get(['gobyPanelState']).then(function (result) {
-      var panelState = result.gobyPanelState || {};
-      if (panelState.autoStart) {
-        return GobyPanel.show();
-      }
+    // 先预装内置技能（异步），再初始化会话（确保 _autoRegisterSkills 可见）
+    return _preloadBuiltinSkills().then(function () {
+      // 面板就绪 + 技能就绪后再初始化会话
+      initSession();
+      return chrome.storage.local.get(['gobyPanelState']).then(function (result) {
+        var panelState = result.gobyPanelState || {};
+        if (panelState.autoStart) {
+          return GobyPanel.show();
+        }
+      });
     });
   }).catch(function () {
     // 初始化失败 — 退化到立即初始化会话（无面板渲染）
-    initSession();
+    // 仍尝试预装技能
+    _preloadBuiltinSkills().then(function () {
+      initSession();
+    });
   });
 
   // ==================================================================
@@ -625,6 +632,417 @@
       showModalFeedback(t('modal.lang_switch_msg'), 'success', 3000);
     });
 
+    // ---- Plan 09-04: 技能管理区域 ----
+    var skillsSection = document.createElement('div');
+    skillsSection.className = 'goby-skills-section';
+
+    // 节标题 + 导入按钮
+    var skillsTitleRow = document.createElement('div');
+    skillsTitleRow.className = 'goby-skills-section-title';
+
+    var skillsTitleText = document.createElement('span');
+    skillsTitleText.textContent = t('modal.skills_title') || '技能管理';
+
+    var skillsImportBtn = document.createElement('button');
+    skillsImportBtn.className = 'goby-skills-import-btn';
+    skillsImportBtn.id = 'goby-skills-import-btn';
+    skillsImportBtn.textContent = t('modal.skills_import_btn') || '+ 导入技能';
+
+    skillsTitleRow.appendChild(skillsTitleText);
+    skillsTitleRow.appendChild(skillsImportBtn);
+    skillsSection.appendChild(skillsTitleRow);
+
+    // 导入行（默认隐藏）
+    var importRow = document.createElement('div');
+    importRow.className = 'goby-skill-import-row';
+    importRow.id = 'goby-skill-import-row';
+    importRow.style.display = 'none';
+
+    var importInput = document.createElement('input');
+    importInput.type = 'text';
+    importInput.className = 'goby-skill-import-input';
+    importInput.id = 'goby-skill-import-input';
+    importInput.placeholder = 'https://raw.githubusercontent.com/.../SKILL.md';
+
+    var importConfirm = document.createElement('button');
+    importConfirm.className = 'goby-skill-import-confirm-btn';
+    importConfirm.id = 'goby-skill-import-confirm-btn';
+    importConfirm.textContent = t('modal.skills_import_confirm') || '确认导入';
+
+    var importCancel = document.createElement('button');
+    importCancel.className = 'goby-skill-import-cancel-btn';
+    importCancel.id = 'goby-skill-import-cancel-btn';
+    importCancel.textContent = t('modal.skills_cancel') || '取消';
+
+    importRow.appendChild(importInput);
+    importRow.appendChild(importConfirm);
+    importRow.appendChild(importCancel);
+    skillsSection.appendChild(importRow);
+
+    // 反馈信息
+    var skillFeedback = document.createElement('div');
+    skillFeedback.className = 'goby-skill-feedback';
+    skillFeedback.id = 'goby-skill-feedback';
+    skillsSection.appendChild(skillFeedback);
+
+    // 已安装技能列表
+    var skillsListContainer = document.createElement('div');
+    skillsListContainer.className = 'goby-skills-list';
+    skillsListContainer.id = 'goby-skills-list';
+    skillsSection.appendChild(skillsListContainer);
+
+    // 推荐技能区域
+    var recommendedSection = document.createElement('div');
+    recommendedSection.className = 'goby-recommended-section';
+    recommendedSection.id = 'goby-recommended-section';
+
+    var recommendedTitle = document.createElement('div');
+    recommendedTitle.className = 'goby-recommended-title';
+    recommendedTitle.textContent = t('modal.skills_recommended') || '推荐安装';
+    recommendedSection.appendChild(recommendedTitle);
+
+    var recommendedList = document.createElement('div');
+    recommendedList.id = 'goby-recommended-list';
+    recommendedSection.appendChild(recommendedList);
+
+    skillsSection.appendChild(recommendedSection);
+
+    body.appendChild(skillsSection);
+
+    // ---- 技能管理事件绑定 ----
+
+    // 显示/隐藏导入 URL 输入行
+    skillsImportBtn.addEventListener('click', function () {
+      var row = document.getElementById('goby-skill-import-row');
+      if (row) {
+        var isVisible = row.style.display !== 'none';
+        row.style.display = isVisible ? 'none' : 'flex';
+        if (!isVisible && importInput) {
+          importInput.value = '';
+          importInput.focus();
+        }
+      }
+    });
+
+    // 取消导入
+    importCancel.addEventListener('click', function () {
+      importRow.style.display = 'none';
+      importInput.value = '';
+      hideSkillFeedback();
+    });
+
+    // 确认导入
+    importConfirm.addEventListener('click', function () {
+      var url = (importInput.value || '').trim();
+      if (!url) {
+        showSkillFeedback(t('modal.skills_url_required') || '请输入 URL', 'error');
+        return;
+      }
+      if (url.indexOf('https://') !== 0) {
+        // D-01: 只允许 https:// URLs，阻止 http:// 和 file://
+        showSkillFeedback(t('modal.skills_https_only') || '仅支持 https:// URL', 'error');
+        return;
+      }
+
+      importConfirm.disabled = true;
+      importConfirm.textContent = t('modal.skills_importing') || '导入中...';
+
+      window.GobyAgent.importSkill(url).then(function (result) {
+        importConfirm.disabled = false;
+        importConfirm.textContent = t('modal.skills_import_confirm') || '确认导入';
+        if (result && result.ok) {
+          showSkillFeedback(
+            (t('modal.skills_import_success') || '技能已安装：') + (result.domain || ''),
+            'success'
+          );
+          importRow.style.display = 'none';
+          importInput.value = '';
+          refreshSkillsList();
+          refreshRecommendedList();
+        } else {
+          var errMsg = result && result.error ? result.error : (t('modal.skills_import_failed') || '导入失败');
+          showSkillFeedback(errMsg, 'error');
+        }
+      }).catch(function (e) {
+        importConfirm.disabled = false;
+        importConfirm.textContent = t('modal.skills_import_confirm') || '确认导入';
+        showSkillFeedback((t('modal.skills_import_failed') || '导入失败') + ': ' + (e.message || String(e)), 'error');
+      });
+    });
+
+    // ---- 技能反馈辅助函数 ----
+    var _skillFeedbackTimer = null;
+
+    function showSkillFeedback(msg, type) {
+      if (_skillFeedbackTimer) clearTimeout(_skillFeedbackTimer);
+      var fb = document.getElementById('goby-skill-feedback');
+      if (fb) {
+        fb.textContent = msg;
+        fb.className = 'goby-skill-feedback visible ' + type;
+        _skillFeedbackTimer = setTimeout(function () {
+          fb.className = 'goby-skill-feedback';
+        }, 5000);
+      }
+    }
+
+    function hideSkillFeedback() {
+      if (_skillFeedbackTimer) clearTimeout(_skillFeedbackTimer);
+      var fb = document.getElementById('goby-skill-feedback');
+      if (fb) {
+        fb.className = 'goby-skill-feedback';
+      }
+    }
+
+    // ---- 技能列表渲染函数 ----
+
+    /**
+     * 渲染已安装技能列表
+     */
+    function refreshSkillsList() {
+      var listEl = document.getElementById('goby-skills-list');
+      if (!listEl) return;
+
+      window.GobyAgent.listSkills().then(function (skills) {
+        listEl.innerHTML = '';
+        var domains = Object.keys(skills);
+        if (domains.length === 0) {
+          var emptyDiv = document.createElement('div');
+          emptyDiv.className = 'goby-skills-empty';
+          emptyDiv.textContent = t('modal.skills_empty') || '暂无已安装技能';
+          listEl.appendChild(emptyDiv);
+          return;
+        }
+        for (var i = 0; i < domains.length; i++) {
+          var domain = domains[i];
+          var skill = skills[domain];
+          renderSkillItem(listEl, domain, skill);
+        }
+      }).catch(function () {
+        // 静默降级
+      });
+    }
+
+    /**
+     * 渲染单个技能项
+     */
+    function renderSkillItem(container, domain, skill) {
+      var item = document.createElement('div');
+      item.className = 'goby-skill-item';
+      item.id = 'goby-skill-' + domain.replace(/\./g, '-');
+      if (skill.enabled === false) {
+        item.classList.add('disabled');
+      }
+
+      // 技能信息
+      var info = document.createElement('div');
+      info.className = 'goby-skill-info';
+
+      var nameEl = document.createElement('div');
+      nameEl.className = 'goby-skill-name';
+      nameEl.textContent = skill.name || domain;
+
+      var meta = document.createElement('div');
+      meta.className = 'goby-skill-meta';
+
+      var domainEl = document.createElement('span');
+      domainEl.className = 'goby-skill-domain';
+      domainEl.textContent = domain;
+
+      var actionCountEl = document.createElement('span');
+      actionCountEl.className = 'goby-skill-action-count';
+      actionCountEl.textContent = (skill.actions ? skill.actions.length : 0) + ' ' + (t('modal.skills_actions') || '个操作');
+
+      var sourceEl = document.createElement('span');
+      sourceEl.className = 'goby-skill-source ' + (skill.source === 'builtin' ? 'builtin' : 'imported');
+      sourceEl.textContent = skill.source === 'builtin' ? (t('modal.skills_builtin') || '内置') : (t('modal.skills_imported') || '导入');
+
+      meta.appendChild(domainEl);
+      meta.appendChild(actionCountEl);
+      meta.appendChild(sourceEl);
+
+      info.appendChild(nameEl);
+      info.appendChild(meta);
+
+      // 启用/禁用 toggle
+      var toggleRow = document.createElement('div');
+      toggleRow.className = 'goby-skill-toggle-row';
+
+      var toggleLabel = document.createElement('span');
+      toggleLabel.style.cssText = 'font-size:11px;color:#6b7280;white-space:nowrap;';
+      toggleLabel.textContent = (skill.enabled !== false) ? (t('modal.skills_enabled') || '启用') : (t('modal.skills_disabled') || '禁用');
+
+      var toggleSwitch = document.createElement('label');
+      toggleSwitch.className = 'toggle-switch';
+      toggleSwitch.style.cssText = 'width:36px;height:20px;';
+
+      var toggleInput = document.createElement('input');
+      toggleInput.type = 'checkbox';
+      toggleInput.checked = skill.enabled !== false;
+
+      var toggleSlider = document.createElement('span');
+      toggleSlider.className = 'toggle-slider';
+      toggleSlider.style.cssText = 'border-radius:10px;';
+      toggleSlider.style.cssText += 'width:36px;height:20px;';
+
+      toggleSwitch.appendChild(toggleInput);
+      toggleSwitch.appendChild(toggleSlider);
+
+      toggleRow.appendChild(toggleLabel);
+      toggleRow.appendChild(toggleSwitch);
+
+      // 删除按钮
+      var deleteBtn = document.createElement('button');
+      deleteBtn.className = 'goby-skill-delete-btn';
+      deleteBtn.textContent = '✕'; // ✕
+      deleteBtn.title = t('modal.skills_delete') || '删除技能';
+
+      item.appendChild(info);
+      item.appendChild(toggleRow);
+      item.appendChild(deleteBtn);
+
+      // Toggle 事件
+      toggleInput.addEventListener('change', function () {
+        var newEnabled = this.checked;
+        GobyStorage.toggleSkill(domain, newEnabled).then(function () {
+          toggleLabel.textContent = newEnabled ? (t('modal.skills_enabled') || '启用') : (t('modal.skills_disabled') || '禁用');
+          if (newEnabled) {
+            item.classList.remove('disabled');
+          } else {
+            item.classList.add('disabled');
+          }
+          // 刷新当前页面的技能工具注册
+          var hostname = window.location.hostname;
+          if (hostname === domain || hostname.indexOf('.' + domain) === hostname.length - domain.length - 1) {
+            if (newEnabled) {
+              window.GobyAgent.registerSkillTools(domain);
+            } else {
+              window.GobyAgent.unregisterSkillTools();
+            }
+          }
+        }).catch(function () {
+          // 恢复原状态
+          toggleInput.checked = !newEnabled;
+        });
+      });
+
+      // 删除事件
+      deleteBtn.addEventListener('click', function () {
+        var confirmMsg = t('modal.skills_delete_confirm') || '确定要删除技能';
+        confirmMsg += ' "' + (skill.name || domain) + '"?';
+        if (window.confirm(confirmMsg)) {
+          window.GobyAgent.removeSkill(domain).then(function (removed) {
+            if (removed) {
+              // 如果当前页面匹配该 domain，注销技能工具
+              var hostname = window.location.hostname;
+              if (hostname === domain || hostname.indexOf('.' + domain) === hostname.length - domain.length - 1) {
+                window.GobyAgent.unregisterSkillTools();
+              }
+              refreshSkillsList();
+              refreshRecommendedList();
+            }
+          }).catch(function () {
+            // 静默降级
+          });
+        }
+      });
+
+      container.appendChild(item);
+    }
+
+    /**
+     * 渲染推荐技能（来自 browsing-skills 注册表）
+     */
+    var RECOMMENDED_SKILLS = [
+      { name: 'LinkedIn', domain: 'linkedin.com', actions: 2, path: 'linkedin/SKILL.md' },
+      { name: 'Airbnb', domain: 'airbnb.com', actions: 2, path: 'airbnb/SKILL.md' },
+      { name: 'Glassdoor', domain: 'glassdoor.com', actions: 2, path: 'glassdoor/SKILL.md' },
+      { name: 'Booking.com', domain: 'booking.com', actions: 2, path: 'booking/SKILL.md' },
+      { name: 'Zillow', domain: 'zillow.com', actions: 2, path: 'zillow/SKILL.md' }
+    ];
+
+    function refreshRecommendedList() {
+      var recList = document.getElementById('goby-recommended-list');
+      if (!recList) return;
+
+      window.GobyAgent.listSkills().then(function (installedSkills) {
+        recList.innerHTML = '';
+        for (var i = 0; i < RECOMMENDED_SKILLS.length; i++) {
+          var rec = RECOMMENDED_SKILLS[i];
+          var isInstalled = !!installedSkills[rec.domain];
+
+          var recItem = document.createElement('div');
+          recItem.className = 'goby-recommended-item';
+
+          var recInfo = document.createElement('div');
+          recInfo.className = 'goby-recommended-info';
+
+          var recNameEl = document.createElement('span');
+          recNameEl.className = 'goby-recommended-name';
+          recNameEl.textContent = rec.name;
+
+          var badge = document.createElement('span');
+          badge.className = 'goby-recommended-badge';
+          badge.textContent = (t('modal.skills_from_registry') || '来自 browsing-skills') + ' · ' + rec.actions + ' ' + (t('modal.skills_actions') || '个操作');
+
+          recInfo.appendChild(recNameEl);
+          recInfo.appendChild(badge);
+
+          var installBtn = document.createElement('button');
+          installBtn.className = 'goby-recommended-install-btn';
+          if (isInstalled) {
+            installBtn.classList.add('installed');
+            installBtn.textContent = t('modal.skills_installed') || '已安装';
+            installBtn.disabled = true;
+          } else {
+            installBtn.textContent = t('modal.skills_install') || '安装';
+          }
+
+          recItem.appendChild(recInfo);
+          recItem.appendChild(installBtn);
+          recList.appendChild(recItem);
+
+          // 安装事件（闭包捕获 rec）
+          if (!isInstalled) {
+            (function (recommendation) {
+              installBtn.addEventListener('click', function () {
+                installBtn.disabled = true;
+                installBtn.textContent = t('modal.skills_installing') || '安装中...';
+
+                var rawUrl = 'https://raw.githubusercontent.com/browsing-skills/browsing-skills/main/skills/' + recommendation.path;
+                window.GobyAgent.importSkill(rawUrl).then(function (result) {
+                  if (result && result.ok) {
+                    installBtn.classList.add('installed');
+                    installBtn.textContent = t('modal.skills_installed') || '已安装';
+                    showSkillFeedback(
+                      (t('modal.skills_install_success') || '已安装技能：') + (recommendation.name),
+                      'success'
+                    );
+                    refreshSkillsList();
+                    refreshRecommendedList();
+                  } else {
+                    installBtn.disabled = false;
+                    installBtn.textContent = t('modal.skills_install') || '安装';
+                    var errMsg = result && result.error ? result.error : (t('modal.skills_install_failed') || '安装失败');
+                    showSkillFeedback(errMsg, 'error');
+                  }
+                }).catch(function (e) {
+                  installBtn.disabled = false;
+                  installBtn.textContent = t('modal.skills_install') || '安装';
+                  showSkillFeedback((t('modal.skills_install_failed') || '安装失败') + ': ' + (e.message || String(e)), 'error');
+                });
+              });
+            })(rec);
+          }
+        }
+      }).catch(function () {
+        // 静默降级
+      });
+    }
+
+    // 初次加载技能列表
+    refreshSkillsList();
+    refreshRecommendedList();
+
     // Save button
     var saveBtn = document.createElement('button');
     saveBtn.className = 'goby-modal-save-btn';
@@ -724,6 +1142,9 @@
   var _streamResolve = null;       // callLLMStream Promise resolve
   var _streamReject = null;        // callLLMStream Promise reject
   var _toolCallFailCounts = {};    // 工具失败计数（同会话内持久）
+
+  // ---- 动态技能工具 (Plan 09-02) ----
+  var _activeSkillTools = [];
 
   // ---- 常量定义（AGENT-05 限制参数） ----
   var MAX_LOOPS = 50;
@@ -1776,9 +2197,20 @@
 
   // 动态拼接 SYSTEM_PROMPT 的可用工具列表 — 与 nativeTools 数组完全同步，避免漂移
   // 工具列表行（由 getSystemPrompt 动态追加，不污染常量）
-  var toolListLines = nativeTools.map(function (t) {
-    return '- ' + t.function.name + ': ' + t.function.description;
-  }).join('\n');
+
+  /**
+   * _buildToolListLines — 构建当前所有可用工具的列表行（含已注册技能工具）
+   * @returns {string}
+   */
+  function _buildToolListLines() {
+    var allTools = nativeTools.concat(_activeSkillTools);
+    return allTools.map(function (t) {
+      return '- ' + t.function.name + ': ' + t.function.description;
+    }).join('\n');
+  }
+
+  // 静态后备（getSystemPrompt 会动态重建，此缓存供外部直接引用使用）
+  var toolListLines = _buildToolListLines();
 
   /**
    * getSystemPrompt — 返回完整系统提示词（当前语言的 base + 工具列表）
@@ -1788,7 +2220,7 @@
     var basePrompt = (window.GobyI18n && window.GobyI18n.getSystemPrompt)
       ? window.GobyI18n.getSystemPrompt()
       : '';
-    return basePrompt + toolListLines + '\n';
+    return basePrompt + _buildToolListLines() + '\n';
   }
 
   /**
@@ -2015,8 +2447,9 @@
       // ★ 净化消息格式 — 确保 API 兼容
       var cleanMessages = sanitizeMessages(messages);
 
-      // 构造 tools 参数（使用 nativeTools 的 function schema）
-      var tools = nativeTools.map(function (t) {
+      // 构造 tools 参数（nativeTools + 已注册技能工具）
+      var allTools = nativeTools.concat(_activeSkillTools);
+      var tools = allTools.map(function (t) {
         return { type: 'function', function: t.function };
       });
 
@@ -2647,6 +3080,285 @@
   }
 
   // ================================================================
+  //  Plan 09-01: Skills 系统 — CS 侧导入/列表/删除
+  // ================================================================
+
+  /**
+   * importSkill — 从 URL 导入 SKILL.md 技能文件
+   * 流程：URL → SW fetch → 解析 markdown → 验证 → SW 写入 storage
+   *
+   * @param {string} url - SKILL.md 文件的 https:// URL
+   * @returns {Promise<{ok: boolean, domain?: string, error?: string}>}
+   */
+  function importSkill(url) {
+    if (!url || typeof url !== 'string') {
+      return Promise.resolve({ ok: false, error: '缺少 url 参数' });
+    }
+
+    return sendToSW('skill-import', { action: 'skill-import', url: url }).then(function (response) {
+      // sendToSW 返回字符串（成功响应）或 Error: 开头的字符串（失败）
+      if (typeof response === 'string' && response.startsWith('Error:')) {
+        return { ok: false, error: response };
+      }
+
+      // 检查 response 是否已经是成功对象（有 ok 字段）
+      // SW 可能返回 { ok: true, content: '...' } 或 { ok: false, error: '...' }
+      if (response && typeof response === 'object') {
+        if (!response.ok) {
+          return { ok: false, error: response.error || '导入失败' };
+        }
+        // 成功获取 markdown 内容
+        return parseAndStoreSkill(response.content, url);
+      }
+
+      return { ok: false, error: '未知响应格式: ' + JSON.stringify(response) };
+    });
+  }
+
+  /**
+   * parseAndStoreSkill — 解析 markdown → 验证 → 写入 storage
+   * @param {string} markdownText - SKILL.md 原始内容
+   * @returns {Promise<{ok: boolean, domain?: string, error?: string}>}
+   */
+  function parseAndStoreSkill(markdownText, sourceUrl) {
+    if (typeof SkillLoader === 'undefined' || !SkillLoader.parseSkillMarkdown) {
+      return Promise.resolve({ ok: false, error: 'SkillLoader 模块未加载' });
+    }
+
+    // 步骤 1: 解析 markdown
+    var parseResult;
+    try {
+      parseResult = SkillLoader.parseSkillMarkdown(markdownText);
+    } catch (e) {
+      return Promise.resolve({ ok: false, error: '解析 SKILL.md 失败: ' + (e.message || String(e)) });
+    }
+
+    // 步骤 2: 验证
+    var validation = SkillLoader.validateSkill(parseResult);
+    if (!validation.valid) {
+      return Promise.resolve({ ok: false, error: '验证失败: ' + validation.errors.join('; ') });
+    }
+
+    // 步骤 3: 写入 storage（委托 SW）
+    return sendToSW('skill-store', {
+      action: 'skill-store',
+      skillManifest: {
+        name: validation.skillManifest.name,
+        description: validation.skillManifest.description,
+        domain: validation.skillManifest.domain,
+        actions: validation.skillManifest.actions,
+        source: sourceUrl
+      }
+    }).then(function (storeResponse) {
+      if (storeResponse && storeResponse.ok) {
+        return { ok: true, domain: storeResponse.domain };
+      }
+      var errMsg = (storeResponse && storeResponse.error) || '写入 storage 失败';
+      return { ok: false, error: errMsg };
+    });
+  }
+
+  /**
+   * listSkills — 获取所有已安装技能
+   * @returns {Promise<Object>} { domain: skillManifest, ... }
+   */
+  function listSkills() {
+    return sendToSW('skill-list', { action: 'skill-list' }).then(function (response) {
+      if (response && response.ok) {
+        return response.skills || {};
+      }
+      return {};
+    });
+  }
+
+  /**
+   * removeSkill — 按 domain 删除技能
+   * @param {string} domain
+   * @returns {Promise<{ok: boolean, error?: string}>}
+   */
+  function removeSkill(domain) {
+    if (!domain || typeof domain !== 'string') {
+      return Promise.resolve({ ok: false, error: '缺少 domain 参数' });
+    }
+    return sendToSW('skill-remove', { action: 'skill-remove', domain: domain }).then(function (response) {
+      if (response && response.ok) {
+        return { ok: true };
+      }
+      return { ok: false, error: (response && response.error) || '删除失败' };
+    });
+  }
+
+  // ================================================================
+  //  Plan 09-03: 内置技能首次启动预装
+  // ================================================================
+
+  /**
+   * _preloadBuiltinSkills — 首次运行时将 5 个内置技能写入 gobySkills storage
+   * 仅在 gobySkills 为空时执行（无已安装技能 = 新安装）。
+   * 从扩展自带的 skills/builtin/*.SKILL.md 文件加载，无需网络请求。
+   *
+   * @returns {Promise<void>}
+   */
+  var _builtinPreloaded = false;
+
+  function _preloadBuiltinSkills() {
+    if (_builtinPreloaded) {
+      return Promise.resolve();
+    }
+    _builtinPreloaded = true;
+
+    return GobyStorage.getAllSkills().then(function (allSkills) {
+      var installedDomains = Object.keys(allSkills);
+      if (installedDomains.length > 0) {
+        // 已有已安装技能，跳过预装
+        return;
+      }
+
+      var BUILTIN_SKILLS = [
+        'skills/builtin/amazon.SKILL.md',
+        'skills/builtin/github.SKILL.md',
+        'skills/builtin/google.SKILL.md',
+        'skills/builtin/baidu.SKILL.md',
+        'skills/builtin/wikipedia.SKILL.md'
+      ];
+
+      if (typeof SkillLoader === 'undefined' || !SkillLoader.parseSkillMarkdown) {
+        // SkillLoader 未加载 — 静默降级
+        return;
+      }
+
+      // 逐个加载技能（顺序处理，避免 chrome.storage.local 竞态条件）
+      var chain = Promise.resolve();
+      for (var s = 0; s < BUILTIN_SKILLS.length; s++) {
+        (function (path) {
+          chain = chain.then(function () {
+            var url = chrome.runtime.getURL(path);
+            return fetch(url).then(function (res) {
+              if (!res.ok) return undefined;
+              return res.text();
+            }).then(function (markdown) {
+              if (!markdown) return undefined;
+              var parseResult;
+              try {
+                parseResult = SkillLoader.parseSkillMarkdown(markdown);
+              } catch (e) {
+                return undefined;
+              }
+              var validation = SkillLoader.validateSkill(parseResult);
+              if (!validation.valid) return undefined;
+              return GobyStorage.saveSkill(validation.skillManifest.domain, {
+                name: validation.skillManifest.name,
+                description: validation.skillManifest.description,
+                domain: validation.skillManifest.domain,
+                actions: validation.skillManifest.actions,
+                source: 'builtin'
+              });
+            }).catch(function () {
+              return undefined;
+            });
+          });
+        })(BUILTIN_SKILLS[s]);
+      }
+      return chain;
+    });
+  }
+
+  // ================================================================
+  //  Plan 09-02: 动态技能工具注册/注销
+  // ================================================================
+
+  /**
+   * registerSkillTools — 为指定 domain 注册技能工具
+   * 从 gobySkills storage 读取技能 manifest，将每个 action 包装为
+   * nativeTools 兼容的工具定义，追加到 _activeSkillTools 数组
+   *
+   * @param {string} domain - 网站域名 (e.g., "amazon.com")
+   * @returns {Promise<number>} 注册的工具数量
+   */
+  function registerSkillTools(domain) {
+    // 先清除旧技能工具
+    unregisterSkillTools();
+
+    if (!domain || typeof domain !== 'string') {
+      return Promise.resolve(0);
+    }
+
+    return GobyStorage.getSkill(domain).then(function (skill) {
+      if (!skill || !Array.isArray(skill.actions) || skill.actions.length === 0) {
+        return 0;
+      }
+
+      // Plan 09-04: 跳过已禁用的技能
+      if (skill.enabled === false) {
+        return 0;
+      }
+
+      var registered = 0;
+      for (var i = 0; i < skill.actions.length; i++) {
+        var action = skill.actions[i];
+        if (!action.name || typeof action.execute !== 'function') {
+          continue;
+        }
+
+        // 将 browsing-skills 格式的结果转换为 agent loop 兼容的字符串
+        var actionName = action.name;
+        var actionExecute = action.execute;
+
+        var toolDef = {
+          type: 'function',
+          function: {
+            name: actionName,
+            description: action.description || '',
+            parameters: action.inputSchema || { type: 'object', properties: {} }
+          },
+          timeout: 30000,
+          execute: function (params) {
+            try {
+              var result = actionExecute(params);
+              // browsing-skills 标准返回格式: { content: [{ type: "text", text: "..." }] }
+              if (result && Array.isArray(result.content)) {
+                var texts = [];
+                for (var ci = 0; ci < result.content.length; ci++) {
+                  if (result.content[ci] && typeof result.content[ci].text === 'string') {
+                    texts.push(result.content[ci].text);
+                  }
+                }
+                if (texts.length === 1) {
+                  return texts[0];
+                }
+                return JSON.stringify(texts.length > 0 ? texts : result);
+              }
+              // 直接返回字符串或可序列化结果
+              if (typeof result === 'string') {
+                return result;
+              }
+              return JSON.stringify(result);
+            } catch (e) {
+              return 'Error: skill ' + actionName + ' 执行失败 - ' + (e.message || String(e));
+            }
+          }
+        };
+
+        _activeSkillTools.push(toolDef);
+        registered++;
+      }
+
+      return registered;
+    }).catch(function () {
+      // storage 读取失败 — 静默降级
+      unregisterSkillTools();
+      return 0;
+    });
+  }
+
+  /**
+   * unregisterSkillTools — 清除所有已注册的技能工具
+   */
+  function unregisterSkillTools() {
+    _activeSkillTools.length = 0;
+  }
+
+  // ================================================================
   //  工具执行引擎 (GOBY_DESIGN.md §十六)
   // ================================================================
 
@@ -2666,13 +3378,15 @@
       }
     }
 
-    // 在 nativeTools 中查找匹配的工具
+    // 在 nativeTools 和已注册技能工具中查找匹配的工具
     var toolDef = nativeTools.find(function (t) {
+      return t.function.name === toolCall.function.name;
+    }) || _activeSkillTools.find(function (t) {
       return t.function.name === toolCall.function.name;
     });
 
     if (!toolDef) {
-      var availableTools = nativeTools.map(function (t) {
+      var availableTools = nativeTools.concat(_activeSkillTools).map(function (t) {
         return t.function.name;
       }).join(', ');
       // 使用 UnknownTool: 前缀（区别于 Error:），让 executeWithTimeout 能识别"未知工具"
@@ -2700,8 +3414,10 @@
     var toolName = toolCall.function.name;
     var timeout = TOOL_TIMEOUT;
 
-    // 查找工具特定超时
+    // 在 nativeTools 和已注册技能工具中查找工具特定超时
     var toolDef = nativeTools.find(function (t) {
+      return t.function.name === toolName;
+    }) || _activeSkillTools.find(function (t) {
       return t.function.name === toolName;
     });
     if (toolDef && toolDef.timeout) {
@@ -3189,7 +3905,15 @@
     getAllSessions: getAllSessions,
     // 260620-i08: 暴露内部消息状态机函数供 jest 测试访问
     enforceMessageLimit: enforceMessageLimit,
-    sanitizeMessages: sanitizeMessages
+    sanitizeMessages: sanitizeMessages,
+    // Plan 09-02: 技能工具注册
+    _activeSkillTools: _activeSkillTools,
+    registerSkillTools: registerSkillTools,
+    unregisterSkillTools: unregisterSkillTools,
+    _autoRegisterSkills: _autoRegisterSkills,
+    _domainMatchesSkill: _domainMatchesSkill,
+    // Plan 09-03: 内置技能预装
+    _preloadBuiltinSkills: _preloadBuiltinSkills
   };
 
   // 暴露 GobyAgent 到全局
@@ -3227,6 +3951,16 @@
     isStopRequested: function () {
       return _agentState.stopRequested === true;
     },
+    // Skills management (Plan 09-01 + 09-02 + 09-04)
+    importSkill: importSkill,
+    listSkills: listSkills,
+    removeSkill: removeSkill,
+    toggleSkill: function (domain, enabled) {
+      return GobyStorage.toggleSkill(domain, enabled);
+    },
+    registerSkillTools: registerSkillTools,
+    unregisterSkillTools: unregisterSkillTools,
+    _activeSkillTools: _activeSkillTools,
     getState: function () {
       return {
         messages: _agentState.messages.slice(),
@@ -3345,7 +4079,51 @@
       });
     }).catch(function () {
       // 跨域拉取失败（storage 错误等）— 静默降级，保留 createSession 的空 session
+    }).then(function () {
+      // Plan 09-02: 自动注册当前域名的技能工具
+      _autoRegisterSkills();
     });
+  }
+
+  /**
+   * _autoRegisterSkills — 为当前 hostname 自动注册匹配的技能工具
+   * 支持子域名通配：amazon.com 自动匹配 www.amazon.com
+   */
+  function _autoRegisterSkills() {
+    var hostname = window.location.hostname;
+    if (!hostname) return;
+
+    // 先尝试精确匹配
+    GobyStorage.getSkill(hostname).then(function (skill) {
+      if (skill && Array.isArray(skill.actions) && skill.actions.length > 0) {
+        return registerSkillTools(hostname);
+      }
+      // 尝试子域名通配匹配
+      return GobyStorage.getAllSkills().then(function (allSkills) {
+        var domains = Object.keys(allSkills);
+        for (var i = 0; i < domains.length; i++) {
+          if (_domainMatchesSkill(hostname, domains[i])) {
+            // 使用 skill 存储的 domain 作为 key 注册
+            return registerSkillTools(domains[i]);
+          }
+        }
+        return 0;
+      });
+    }).catch(function () {
+      // storage 读取失败 — 静默降级
+    });
+  }
+
+  /**
+   * _domainMatchesSkill — 检查 hostname 是否匹配 skill domain
+   * 支持子域名通配：amazon.com 匹配 www.amazon.com，但不匹配 notamazon.com
+   * @param {string} host - 当前 hostname (e.g., "www.amazon.com")
+   * @param {string} skillDomain - skill 声明的 domain (e.g., "amazon.com")
+   * @returns {boolean}
+   */
+  function _domainMatchesSkill(host, skillDomain) {
+    if (!host || !skillDomain) return false;
+    return host === skillDomain || host.indexOf('.' + skillDomain, host.length - skillDomain.length - 1) !== -1;
   }
 
   // URL 变化监听 (SESS-01, D-16)

@@ -993,6 +993,101 @@
       return true; // 异步响应
     }
 
+    // ============================================================
+    //  Plan 09-01: Skills 系统 — SW 侧处理
+    // ============================================================
+
+    // skill-import: CS → SW fetch() 下载远程 SKILL.md → 返回内容给 CS
+    // 安全：仅允许 https:// URL（拒绝 http/data/file 协议）
+    if (message.action === 'skill-import') {
+      var skillUrl = message.url;
+      if (!skillUrl || typeof skillUrl !== 'string') {
+        sendResponse({ ok: false, error: '缺少 url 参数' });
+        return false;
+      }
+      // 协议白名单
+      var urlLower = skillUrl.toLowerCase();
+      if (!urlLower.startsWith('https://')) {
+        sendResponse({ ok: false, error: '仅支持 https:// 协议的技能文件 URL' });
+        return false;
+      }
+      // SW 使用 fetch 下载（MV3 SW 环境可用）
+      globalThis.fetch(skillUrl)
+        .then(function (response) {
+          if (!response.ok) {
+            return response.text().then(function (body) {
+              sendResponse({ ok: false, error: '下载失败 HTTP ' + response.status + ': ' + (body || response.statusText).substring(0, 200) });
+            });
+          }
+          return response.text().then(function (text) {
+            sendResponse({ ok: true, content: text });
+          });
+        })
+        .catch(function (err) {
+          sendResponse({ ok: false, error: '网络请求失败: ' + (err.message || String(err)) });
+        });
+      return true; // 异步响应
+    }
+
+    // skill-store: CS → SW 写入技能 Manifest 到 chrome.storage.local
+    if (message.action === 'skill-store') {
+      var skillManifest = message.skillManifest;
+      if (!skillManifest || !skillManifest.domain) {
+        sendResponse({ ok: false, error: '缺少 skillManifest 或 domain 字段' });
+        return false;
+      }
+      chrome.storage.local.get(['gobySkills']).then(function (result) {
+        var skills = result.gobySkills || {};
+        skills[skillManifest.domain] = {
+          name: skillManifest.name || '',
+          description: skillManifest.description || '',
+          domain: skillManifest.domain,
+          actions: skillManifest.actions || [],
+          installedAt: Date.now(),
+          source: skillManifest.source || ''
+        };
+        return chrome.storage.local.set({ gobySkills: skills });
+      }).then(function () {
+        sendResponse({ ok: true, domain: skillManifest.domain });
+      }).catch(function (err) {
+        sendResponse({ ok: false, error: 'storage 写入失败: ' + (err.message || String(err)) });
+      });
+      return true; // 异步响应
+    }
+
+    // skill-list: CS → SW 读取所有已安装技能
+    if (message.action === 'skill-list') {
+      chrome.storage.local.get(['gobySkills']).then(function (result) {
+        sendResponse({ ok: true, skills: result.gobySkills || {} });
+      }).catch(function (err) {
+        sendResponse({ ok: false, error: 'storage 读取失败: ' + (err.message || String(err)) });
+      });
+      return true; // 异步响应
+    }
+
+    // skill-remove: CS → SW 按 domain 删除技能
+    if (message.action === 'skill-remove') {
+      var rmDomain = message.domain;
+      if (!rmDomain || typeof rmDomain !== 'string') {
+        sendResponse({ ok: false, error: '缺少 domain 参数' });
+        return false;
+      }
+      chrome.storage.local.get(['gobySkills']).then(function (result) {
+        var skills = result.gobySkills || {};
+        if (!skills[rmDomain]) {
+          sendResponse({ ok: false, error: '技能 "' + rmDomain + '" 不存在' });
+          return;
+        }
+        delete skills[rmDomain];
+        return chrome.storage.local.set({ gobySkills: skills }).then(function () {
+          sendResponse({ ok: true });
+        });
+      }).catch(function (err) {
+        sendResponse({ ok: false, error: 'storage 操作失败: ' + (err.message || String(err)) });
+      });
+      return true; // 异步响应
+    }
+
     return false;
   });
 

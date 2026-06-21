@@ -29,9 +29,15 @@
   "content_scripts": [
     {
       "matches": ["<all_urls>"],
-      "js": ["lib/i18n.js", "lib/purify.min.js", "lib/marked.min.js", "storage.js", "lib/form-helpers.js", "panel.js", "content-script.js"],
+      "js": ["lib/i18n.js", "lib/purify.min.js", "lib/marked.min.js", "storage.js", "lib/skill-loader.js", "lib/form-helpers.js", "panel.js", "content-script.js"],
       "css": ["lib/toggle.css", "agent-panel.css"],
       "run_at": "document_idle"
+    }
+  ],
+  "web_accessible_resources": [
+    {
+      "resources": ["skills/builtin/*.SKILL.md"],
+      "matches": ["<all_urls>"]
     }
   ],
   "icons": {

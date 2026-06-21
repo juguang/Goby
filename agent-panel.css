@@ -317,3 +317,310 @@
     opacity: 0;
   }
 }
+
+/* ---- Skills Management Section (Plan 09-04) ---- */
+
+.goby-skills-section {
+  border-top: 1px solid #e5e7eb;
+  margin-top: 16px;
+  padding-top: 12px;
+}
+
+.goby-skills-section-title {
+  font-size: 14px;
+  font-weight: 600;
+  color: #111827;
+  margin-bottom: 10px;
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+}
+
+.goby-skills-import-btn {
+  font-size: 12px;
+  padding: 4px 10px;
+  border: 1px solid #667eea;
+  border-radius: 14px;
+  background: rgba(102, 126, 234, 0.08);
+  color: #667eea;
+  cursor: pointer;
+  transition: background 0.15s;
+}
+
+.goby-skills-import-btn:hover {
+  background: rgba(102, 126, 234, 0.15);
+}
+
+.goby-skill-import-row {
+  display: flex;
+  gap: 6px;
+  margin-bottom: 10px;
+  align-items: center;
+}
+
+.goby-skill-import-input {
+  flex: 1;
+  height: 32px;
+  padding: 4px 10px;
+  border: 1px solid #e5e7eb;
+  border-radius: 4px;
+  font-size: 12px;
+  font-family: inherit;
+  color: #111827;
+  background: #ffffff;
+  outline: none;
+  box-sizing: border-box;
+}
+
+.goby-skill-import-input:focus {
+  border-color: #667eea;
+  outline: 2px solid rgba(102, 126, 234, 0.4);
+  outline-offset: -1px;
+}
+
+.goby-skill-import-input::placeholder {
+  color: #9ca3af;
+}
+
+.goby-skill-import-confirm-btn {
+  height: 32px;
+  padding: 0 12px;
+  border: none;
+  border-radius: 4px;
+  background: linear-gradient(135deg, #667eea, #764ba2);
+  color: #ffffff;
+  font-size: 12px;
+  font-weight: 600;
+  font-family: inherit;
+  cursor: pointer;
+  white-space: nowrap;
+  transition: opacity 0.15s;
+}
+
+.goby-skill-import-confirm-btn:hover {
+  opacity: 0.85;
+}
+
+.goby-skill-import-cancel-btn {
+  height: 32px;
+  padding: 0 12px;
+  border: 1px solid #e5e7eb;
+  border-radius: 4px;
+  background: #ffffff;
+  color: #6b7280;
+  font-size: 12px;
+  font-family: inherit;
+  cursor: pointer;
+  white-space: nowrap;
+}
+
+.goby-skill-import-cancel-btn:hover {
+  background: #f3f4f6;
+}
+
+.goby-skill-feedback {
+  font-size: 11px;
+  padding: 4px 8px;
+  border-radius: 4px;
+  margin-bottom: 8px;
+  display: none;
+}
+
+.goby-skill-feedback.visible {
+  display: block;
+}
+
+.goby-skill-feedback.success {
+  background: #f0fdf4;
+  color: #166534;
+  border-left: 3px solid #22c55e;
+}
+
+.goby-skill-feedback.error {
+  background: #fef2f2;
+  color: #991b1b;
+  border-left: 3px solid #ef4444;
+}
+
+.goby-skills-list {
+  max-height: 200px;
+  overflow-y: auto;
+  margin-bottom: 8px;
+}
+
+.goby-skills-empty {
+  font-size: 12px;
+  color: #9ca3af;
+  text-align: center;
+  padding: 16px 0;
+}
+
+.goby-skill-item {
+  display: flex;
+  align-items: center;
+  padding: 8px;
+  border: 1px solid #e5e7eb;
+  border-radius: 6px;
+  margin-bottom: 6px;
+  gap: 8px;
+  background: #ffffff;
+  transition: background 0.15s;
+}
+
+.goby-skill-item:hover {
+  background: #f9fafb;
+}
+
+.goby-skill-item.disabled {
+  opacity: 0.55;
+}
+
+.goby-skill-info {
+  flex: 1;
+  min-width: 0;
+}
+
+.goby-skill-name {
+  font-size: 13px;
+  font-weight: 600;
+  color: #111827;
+  white-space: nowrap;
+  overflow: hidden;
+  text-overflow: ellipsis;
+}
+
+.goby-skill-meta {
+  display: flex;
+  align-items: center;
+  gap: 6px;
+  margin-top: 2px;
+}
+
+.goby-skill-domain {
+  font-size: 11px;
+  color: #6b7280;
+  font-family: monospace;
+}
+
+.goby-skill-action-count {
+  font-size: 11px;
+  color: #9ca3af;
+}
+
+.goby-skill-source {
+  font-size: 10px;
+  padding: 1px 6px;
+  border-radius: 8px;
+  font-weight: 500;
+}
+
+.goby-skill-source.builtin {
+  background: rgba(102, 126, 234, 0.08);
+  color: #667eea;
+}
+
+.goby-skill-source.imported {
+  background: rgba(34, 197, 94, 0.08);
+  color: #166534;
+}
+
+.goby-skill-toggle-row {
+  display: flex;
+  align-items: center;
+  gap: 4px;
+  flex-shrink: 0;
+}
+
+.goby-skill-delete-btn {
+  width: 28px;
+  height: 28px;
+  border: none;
+  border-radius: 4px;
+  background: transparent;
+  color: #9ca3af;
+  font-size: 14px;
+  cursor: pointer;
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  flex-shrink: 0;
+}
+
+.goby-skill-delete-btn:hover {
+  color: #ef4444;
+  background: rgba(239, 68, 68, 0.08);
+}
+
+/* ---- Recommended Skills (Plan 09-04) ---- */
+
+.goby-recommended-section {
+  border-top: 1px solid #e5e7eb;
+  margin-top: 10px;
+  padding-top: 10px;
+}
+
+.goby-recommended-title {
+  font-size: 12px;
+  font-weight: 600;
+  color: #6b7280;
+  margin-bottom: 8px;
+  text-transform: uppercase;
+  letter-spacing: 0.5px;
+}
+
+.goby-recommended-item {
+  display: flex;
+  align-items: center;
+  padding: 6px 8px;
+  border: 1px dashed #e5e7eb;
+  border-radius: 6px;
+  margin-bottom: 4px;
+  gap: 8px;
+  background: #fafafa;
+}
+
+.goby-recommended-info {
+  flex: 1;
+  min-width: 0;
+}
+
+.goby-recommended-name {
+  font-size: 12px;
+  font-weight: 600;
+  color: #111827;
+}
+
+.goby-recommended-badge {
+  font-size: 10px;
+  padding: 1px 6px;
+  border-radius: 8px;
+  background: rgba(245, 158, 11, 0.1);
+  color: #92400e;
+  margin-left: 6px;
+}
+
+.goby-recommended-install-btn {
+  height: 28px;
+  padding: 0 10px;
+  border: 1px solid #22c55e;
+  border-radius: 14px;
+  background: rgba(34, 197, 94, 0.08);
+  color: #166534;
+  font-size: 11px;
+  font-weight: 600;
+  font-family: inherit;
+  cursor: pointer;
+  white-space: nowrap;
+  transition: background 0.15s;
+}
+
+.goby-recommended-install-btn:hover {
+  background: rgba(34, 197, 94, 0.15);
+}
+
+.goby-recommended-install-btn.installed {
+  border-color: #d1d5db;
+  background: #f3f4f6;
+  color: #9ca3af;
+  cursor: default;
+}
