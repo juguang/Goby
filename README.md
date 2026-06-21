@@ -24,9 +24,10 @@
 
 | | |
 | --- | --- |
-| **Tools for the live web** | 15 built-in tools — query, list, fill, click, check, select, submit, wait, evaluate, screenshot, analyze. The page is the agent's workspace. |
+| **Tools for the live web** | 19 built-in tools — query, list, fill, click, check, select, submit, wait, evaluate, screenshot, analyze, navigate, open_tab, list_tabs, close_tab, finish_workflow, and more. The page is the agent's workspace. |
 | **Bring your own model** | Any OpenAI-compatible endpoint — OpenAI, DeepSeek, Qwen, GLM, or your own. Multiple profiles, switch on the fly. |
-| **A real tool-calling loop** | Streaming responses. Multi-step reasoning across chained tool calls. Up to 15 rounds per turn, 50 per session, 15 s per-tool timeout. |
+| **A real tool-calling loop** | Streaming responses. Multi-step reasoning across chained tool calls. Up to 50 rounds per turn, 50 tools per session, 15 s per-tool timeout. Stop button to interrupt in-progress execution. |
+| **Cross-page autonomous navigation** | Agent can navigate to other pages, open new tabs, run tasks on them, and return results — all automatically. Worker tab progress streams back to the chat tab in real time. |
 | **No backend, ever** | Everything runs in your browser. Your API key and your conversations never touch a Goby-controlled server. |
 | **Isolated by design** | Shadow DOM keeps the panel out of the page — and the page out of the panel. DOMPurify sanitizes every LLM payload; user input uses `textContent`, never `innerHTML`. |
 | **Read it in an afternoon** | ~5,500 lines of vanilla JS, no framework, no build step, no transpile. The whole runtime fits in your head. |
@@ -74,7 +75,13 @@ Open the panel and just talk to it:
 - *"Take a screenshot of the page (excluding the panel)"*
 - *"What's 23 × 17 + 4?"*
 
-The agent loops: LLM → tool calls → tool results → LLM → … until it has a final text reply (or hits the 15-round cap).
+The agent loops: LLM → tool calls → tool results → LLM → … until it has a final text reply (or hits the 50-round cap).
+
+For **cross-page tasks**, the agent can open new tabs, navigate to different URLs, execute workflows on them, and return results:
+
+- *"Open Google, search for 'web agent', and summarize the top 3 results"*
+- *"Navigate to the GitHub repo and list all the sections in the README"*
+- *"Open the support site and find the user manual for enterprise routers"*
 
 ## Privacy
 
@@ -90,8 +97,8 @@ Goby is designed to send your data to exactly one place: the LLM endpoint you co
 - **Browser-internal pages** (`chrome://`, `chrome-extension://`, `about:`) are off-limits — Chrome blocks content scripts there. The Web Store and most settings pages are also restricted.
 - **`file://` pages** require you to toggle "Allow access to file URLs" in the extension's details page.
 - **Strict CSP sites** may block `page_evaluate`'s injected scripts. The other tools (DOM queries, fills, clicks) still work because they operate through Chrome's own APIs.
-- **Operates only on the current tab/page** — Goby has no `navigate` or `open_tab` tool. It cannot jump to a URL of its own accord, open a new tab, or switch tabs. (If a `page_click` happens to hit a link, that's the page's own navigation — Goby does not follow.)
-- **No background automation** — Goby runs only while the panel is open and the tab is focused.
+- **`data:` URLs are not supported** — Chrome blocks content script injection on `data:` URLs. Navigating to a `data:` URL will cause the agent to stop permanently. Use `page_evaluate` to create content inline instead.
+- **Cross-origin session isolation** — Sessions are scoped by origin. Navigating to a different subdomain creates a new session (context is inherited from the previous origin).
 
 ## License
 
