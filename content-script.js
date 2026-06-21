@@ -1590,7 +1590,7 @@
       type: 'function',
       function: {
         name: 'page_navigate',
-        description: 'Navigate the current tab to the specified URL (supports same-origin and cross-origin)',
+        description: 'Navigate the current tab to the specified URL (supports http/https only. Do NOT navigate to data: URLs — they cannot load Goby and the agent will stop permanently)',
         parameters: {
           type: 'object',
           properties: {
@@ -1601,6 +1601,10 @@
       },
       timeout: 15000,
       execute: function (args) {
+        // data: URL 不支持 content script 注入 → 导航后 Goby 不存在 → 永远不 resume
+        if (typeof args.url === 'string' && args.url.indexOf('data:') === 0) {
+          return 'Error: 不能导航到 data: URL（data: 协议不支持 Goby 注入，导航后 agent 会丢失）。请用其他方式展示内容（如在当前页直接用 page_evaluate 创建展示区域、或打开新 https 页面）。';
+        }
         // D-14: 复用 BR/PCN navigation 检测模式
         return new Promise(function (resolve) {
           var navigated = false;
