@@ -3222,8 +3222,10 @@
 
     return GobyStorage.getAllSkills().then(function (allSkills) {
       var installedDomains = Object.keys(allSkills);
+      console.log('[preload] 现有技能:', installedDomains.length, installedDomains);
       if (installedDomains.length > 0) {
         // 已有已安装技能，跳过预装
+        console.log('[preload] 跳过 — 已有技能');
         return;
       }
 
@@ -3237,6 +3239,7 @@
 
       if (typeof SkillLoader === 'undefined' || !SkillLoader.parseSkillMarkdown) {
         // SkillLoader 未加载 — 静默降级
+        console.error('[preload] SkillLoader 不可用:', typeof SkillLoader);
         return;
       }
 
@@ -3246,19 +3249,22 @@
         (function (path) {
           chain = chain.then(function () {
             var url = chrome.runtime.getURL(path);
+            console.log('[preload] 加载:', path);
             return fetch(url).then(function (res) {
-              if (!res.ok) return undefined;
+              if (!res.ok) { console.error('[preload] fetch ' + res.status, path); return undefined; }
               return res.text();
             }).then(function (markdown) {
-              if (!markdown) return undefined;
+              if (!markdown) { console.error('[preload] 空内容', path); return undefined; }
               var parseResult;
               try {
                 parseResult = SkillLoader.parseSkillMarkdown(markdown);
               } catch (e) {
+                console.error('[preload] 解析失败', path, e.message);
                 return undefined;
               }
               var validation = SkillLoader.validateSkill(parseResult);
-              if (!validation.valid) return undefined;
+              if (!validation.valid) { console.error('[preload] 验证失败', path, validation.error); return undefined; }
+              console.log('[preload] 安装成功:', path);
               return GobyStorage.saveSkill(validation.skillManifest.domain, {
                 name: validation.skillManifest.name,
                 description: validation.skillManifest.description,
