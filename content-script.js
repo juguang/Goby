@@ -1931,8 +1931,12 @@
           pendingIds.splice(matchIdx, 1);
           final.push(fm);
         } else {
-          // 重复 tool message 或未知 id — 保留（其他校验已处理）
-          final.push(fm);
+          // 重复 tool message 或孤立（pendingIds 已被前一个 tool 消费 / flushPending 清空）
+          // — 必须丢弃。OpenAI API 严格要求 role='tool' 紧跟对应 tool_calls，
+          //   保留会导致 HTTP 400 "Messages with role 'tool' must be a response to a
+          //   preceding message with 'tool_calls'"。
+          // Phase 8 fix (260621-jHk): 之前错误地保留，导致 worker Tab page_analyze
+          //   后下一轮 callLLMStream HTTP 400。
         }
       } else {
         // user/无 tool_calls 的 assistant/system — 必须先 flush pending
