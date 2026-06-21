@@ -1055,8 +1055,10 @@
     }
 
     // 初次加载技能列表
+    console.log('[skills] 准备调用 refreshSkillsList + refreshRecommendedList');
     refreshSkillsList();
     refreshRecommendedList();
+    console.log('[skills] refreshSkillsList + refreshRecommendedList 已调用');
 
     // Save button
     var saveBtn = document.createElement('button');
