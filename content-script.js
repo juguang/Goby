@@ -2730,10 +2730,11 @@
    * @returns {Promise<Object>} { domain: skillManifest, ... }
    */
   function listSkills() {
-    return new Promise(function (resolve) {
-      chrome.storage.local.get(['gobySkills'], function (result) {
-        resolve(result.gobySkills || {});
-      });
+    return sendToSW('skill-list', { action: 'skill-list' }).then(function (response) {
+      if (response && response.ok) {
+        return response.skills || {};
+      }
+      return {};
     });
   }
 
@@ -2746,18 +2747,11 @@
     if (!domain || typeof domain !== 'string') {
       return Promise.resolve({ ok: false, error: '缺少 domain 参数' });
     }
-    return new Promise(function (resolve) {
-      chrome.storage.local.get(['gobySkills'], function (result) {
-        var skills = result.gobySkills || {};
-        if (!skills[domain]) {
-          resolve({ ok: false, error: '技能 "' + domain + '" 不存在' });
-          return;
-        }
-        delete skills[domain];
-        chrome.storage.local.set({ gobySkills: skills }, function () {
-          resolve({ ok: true });
-        });
-      });
+    return sendToSW('skill-remove', { action: 'skill-remove', domain: domain }).then(function (response) {
+      if (response && response.ok) {
+        return { ok: true };
+      }
+      return { ok: false, error: (response && response.error) || '删除失败' };
     });
   }
 

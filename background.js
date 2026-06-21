@@ -1055,7 +1055,41 @@
       return true; // 异步响应
     }
 
+    // skill-list: CS → SW 读取所有已安装技能
+    if (message.action === 'skill-list') {
+      chrome.storage.local.get(['gobySkills']).then(function (result) {
+        sendResponse({ ok: true, skills: result.gobySkills || {} });
+      }).catch(function (err) {
+        sendResponse({ ok: false, error: 'storage 读取失败: ' + (err.message || String(err)) });
+      });
+      return true; // 异步响应
+    }
+
+    // skill-remove: CS → SW 按 domain 删除技能
+    if (message.action === 'skill-remove') {
+      var rmDomain = message.domain;
+      if (!rmDomain || typeof rmDomain !== 'string') {
+        sendResponse({ ok: false, error: '缺少 domain 参数' });
+        return false;
+      }
+      chrome.storage.local.get(['gobySkills']).then(function (result) {
+        var skills = result.gobySkills || {};
+        if (!skills[rmDomain]) {
+          sendResponse({ ok: false, error: '技能 "' + rmDomain + '" 不存在' });
+          return;
+        }
+        delete skills[rmDomain];
+        return chrome.storage.local.set({ gobySkills: skills }).then(function () {
+          sendResponse({ ok: true });
+        });
+      }).catch(function (err) {
+        sendResponse({ ok: false, error: 'storage 操作失败: ' + (err.message || String(err)) });
+      });
+      return true; // 异步响应
+    }
+
     return false;
+  });
 
   // ============================================================
   //  Phase 8 / NAV-09 / D-16: chrome.tabs.onRemoved + chrome.windows.onRemoved
