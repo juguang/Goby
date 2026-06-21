@@ -757,8 +757,13 @@
             //   （D-10：让工作 Tab 有 chat Tab 上下文 + 角色定位）
             // CS 未就绪时 retry 3 次 200ms — 全部失败也不阻塞 sendResponse
             // storage 拉取失败时降级 inherited_messages=[]，仍发基础 workflow-init
+            // Phase 8 fix (260621-f4z): page_open_tab 增加 task 参数；优先用 chat Tab
+            //   传来的 message.task 作为 initial_user_message（让 worker Tab 知道做什么）
+            //   fallback：LLM 忘传 task 时降级到原占位符
             var workerOrigin = message.url;
-            var initialUserMessage = 'Working in workflow ' + workflowId + ', origin: ' + workerOrigin;
+            var initialUserMessage = (message.task && typeof message.task === 'string' && message.task.trim())
+              ? '[Workflow ' + workflowId + ' task] ' + message.task.trim()
+              : 'Working in workflow ' + workflowId + ', origin: ' + workerOrigin;
             // 异步拉 chat Tab 最后 5 条 messages — 失败降级到 []
             chrome.storage.local.get('gobySessions').then(function (gsResult) {
               var sessions = (gsResult && gsResult.gobySessions) || {};

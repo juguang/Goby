@@ -717,7 +717,7 @@
     '2. 顺序执行 — 工具依次调用，每次一个，基于前一个结果决定下一步\n' +
     '3. 工具失败 — 尝试替代方案（不同选择器、不同方法），连续3次失败则跳过\n' +
     '4. 及时停止 — 获取足够信息回答用户后，立即停止调用工具，直接给出答案\n' +
-    '5. 言出必行 — 提到要执行的动作时必须立即发出对应工具调用。禁止声称要做却不调用工具（例如：不要说"让我截个图看看"却不发 page_screenshot；不要说"我去打开 b.com"却不发 page_open_tab；不要说"我点一下搜索按钮"却不发 page_click）。要么直接调用工具，要么不提。\n' +
+    '5. 言出必行 — 提到要执行的动作时必须立即发出对应工具调用。禁止声称要做却不调用工具（例如：不要说"让我截个图看看"却不发 page_screenshot；不要说"我去打开 b.com"却不发 page_open_tab；不要说"我点一下搜索按钮"却不发 page_click）。要么直接调用工具，要么不提。调 page_open_tab 时必须填 task 参数（一句话写清新 Tab 要做什么，例如「搜索 web agent 并总结最重要的页面」），否则新 Tab 的 AI 不知道任务。\n' +
     '调用工具前可以用一句话简要说明意图（如"我需要先查看页面结构"），但这句话必须紧跟工具调用，不能只有话没有工具。任务完成后用一两句总结你做了什么。如果无法完成，说清楚原因和建议。\n\n';
 
   /**
@@ -1598,19 +1598,20 @@
       type: 'function',
       function: {
         name: 'page_open_tab',
-        description: 'Open a new tab with the specified URL. The new tab gets focus.',
+        description: 'Open a new tab and start a workflow to perform a task. The new tab gets focus and its AI will autonomously execute the task. MUST provide a clear task description.',
         parameters: {
           type: 'object',
           properties: {
-            url: { type: 'string', description: '要打开的 URL' }
+            url: { type: 'string', description: '要打开的 URL' },
+            task: { type: 'string', description: '在新 Tab 里要完成的具体任务（必填，用一句话描述，例如「搜索 web agent 并总结最重要的页面」）。新 Tab 的 AI 会以这条指令为目标自主工作，完成后将结果回传给当前 Tab。' }
           },
-          required: ['url']
+          required: ['url', 'task']
         }
       },
       timeout: 15000,
       execute: function (args) {
         return new Promise(function (resolve) {
-          sendToSW('tab-open', {action: 'tab-open', url: args.url}).then(function (response) {
+          sendToSW('tab-open', {action: 'tab-open', url: args.url, task: args.task}).then(function (response) {
             var result = String(response);
             // Phase 8 / D-12 / BR-2 扩展：tab 打开成功（response 含 '(workflow:'）时
             // 追加 '(workflow_started' 字符串让 processAgentMessage 的 BR-2 break detection
