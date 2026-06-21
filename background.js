@@ -761,9 +761,20 @@
             //   传来的 message.task 作为 initial_user_message（让 worker Tab 知道做什么）
             //   fallback：LLM 忘传 task 时降级到原占位符
             var workerOrigin = message.url;
-            var initialUserMessage = (message.task && typeof message.task === 'string' && message.task.trim())
-              ? '[Workflow ' + workflowId + ' task] ' + message.task.trim()
-              : 'Working in workflow ' + workflowId + ', origin: ' + workerOrigin;
+            // Phase 8 fix (260621-f4z): page_open_tab 增加 task 参数；优先用 chat Tab
+            //   传来的 message.task 作为 initial_user_message（让 worker Tab 知道做什么）
+            //   fallback：LLM 忘传 task 时降级到原占位符
+            // Phase 8 fix (260621-hKk): task 存在时增强引导「完成后必须调 page_finish_workflow」，
+            //   避免 worker Tab 完整执行任务却不调 finish_workflow 导致 chat Tab 永久卡死。
+            //   fallback 路径保持原格式（向后兼容 08-workflow-init-payload.test.js test 4）
+            var initialUserMessage;
+            if (message.task && typeof message.task === 'string' && message.task.trim()) {
+              initialUserMessage = '[Workflow ' + workflowId + '] 你是 worker Tab，任务：' + message.task.trim() +
+                '\n完成任务后**必须**调用 page_finish_workflow 工具，summary 参数写一句简洁的中文总结（包含关键结果/数据/链接），把结果回传给 chat Tab。' +
+                '禁止只用文本回复代替工具调用——不调 page_finish_workflow，chat Tab 会永久卡死。';
+            } else {
+              initialUserMessage = 'Working in workflow ' + workflowId + ', origin: ' + workerOrigin;
+            }
             // 异步拉 chat Tab 最后 5 条 messages — 失败降级到 []
             chrome.storage.local.get('gobySessions').then(function (gsResult) {
               var sessions = (gsResult && gsResult.gobySessions) || {};
