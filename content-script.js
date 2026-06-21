@@ -107,6 +107,9 @@
         window.GobyPanel.appendMessage('bot', errMsg);
       }
       _agentState.isProcessing = false;
+      if (window.GobyPanel && typeof window.GobyPanel.setAgentRunning === 'function') {
+        window.GobyPanel.setAgentRunning(false);
+      }
       if (window.GobyPanel && window.GobyPanel._inputEl) window.GobyPanel._inputEl.disabled = false;
       if (window.GobyPanel && window.GobyPanel._sendBtn) window.GobyPanel._sendBtn.disabled = false;
       return false;
@@ -713,7 +716,8 @@
     activeOrigin: '',
     sessionId: '',           // 当前会话 ID (Plan 03-03)
     toolCallCounter: 0,     // 会话工具调用计数（AGENT-05 限制保护）
-    roundCount: 0           // 会话累计对话轮数（Phase 03 UAT 测试 4：跨消息累计，不在 processAgentMessage 末尾重置）
+    roundCount: 0,          // 会话累计对话轮数（Phase 03 UAT 测试 4：跨消息累计，不在 processAgentMessage 末尾重置）
+    stopRequested: false    // 用户点击停止按钮 → agent loop 检查后退出
   };
 
   // ---- Agent 循环内部状态 ----
@@ -2822,7 +2826,12 @@
   async function processAgentMessage(userText, options) {
     if (_agentState.isProcessing) return;
     _agentState.isProcessing = true;
+    _agentState.stopRequested = false;
     _agentState.connectionStatus = 'green';
+    // Phase 8: 切换发送按钮为停止按钮（■）
+    if (window.GobyPanel && typeof window.GobyPanel.setAgentRunning === 'function') {
+      window.GobyPanel.setAgentRunning(true);
+    }
     GobyPanel.updateConnectionStatus('green');
 
     // Fix BR: resume 模式跳过 user 消息 push + roundCount 自增
@@ -2856,6 +2865,13 @@
     var loopExitedByLimit = false;
 
     while (loopCount < MAX_LOOPS) {
+      // Phase 8: 用户点击停止按钮 → 退出循环
+      if (_agentState.stopRequested) {
+        _agentState.messages.push({ role: 'assistant', content: '⏹ 已停止' });
+        GobyPanel.appendMessage('bot', '⏹ 已停止');
+        break;
+      }
+
       // 消息数量限制
       enforceMessageLimit();
 
@@ -3050,8 +3066,13 @@
 
     // 清理状态
     _agentState.isProcessing = false;
+    _agentState.stopRequested = false;
     _agentState.connectionStatus = 'gray';
     GobyPanel.updateConnectionStatus('gray');
+    // Phase 8: 恢复发送按钮（➤）
+    if (window.GobyPanel && typeof window.GobyPanel.setAgentRunning === 'function') {
+      window.GobyPanel.setAgentRunning(false);
+    }
     // Phase 03 UAT 测试 4：保留会话累计轮数（_agentState.roundCount），不再重置为 0
     GobyPanel.updateRoundCount(_agentState.roundCount);
 
@@ -3195,6 +3216,13 @@
     switchToSession: switchToSession,
     // Fix BR: 暴露 initSession 供 jest 测试验证 resume 触发
     initSession: initSession,
+    // Phase 8: 停止按钮 — 用户点击停止后 agent loop 检查此标志退出
+    stopAgent: function () {
+      _agentState.stopRequested = true;
+    },
+    isStopRequested: function () {
+      return _agentState.stopRequested === true;
+    },
     getState: function () {
       return {
         messages: _agentState.messages.slice(),

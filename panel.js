@@ -428,6 +428,7 @@
   var _settingsBtn = null;
   var _sessionBtn = null;
   var _closeBtn = null;
+  var _isAgentRunning = false;
 
   // 状态栏 DOM 引用
   var _statusBar = null;
@@ -1276,9 +1277,17 @@
     // 输入框 input: auto-resize
     inputEl.addEventListener('input', autoResize);
 
-    // 发送按钮 click
+    // 发送/停止按钮 click
     sendBtn.addEventListener('click', function () {
-      sendMessage();
+      if (_isAgentRunning) {
+        // 停止 Agent
+        if (window.GobyAgent && typeof window.GobyAgent.stopAgent === 'function') {
+          window.GobyAgent.stopAgent();
+        }
+        setAgentRunning(false);
+      } else {
+        sendMessage();
+      }
     });
 
     // ---- 拖拽 resize 逻辑 ----
@@ -1382,6 +1391,25 @@
     if (!_overlayEl) return;
     _overlayEl.style.display = 'none';
     _overlayImg.src = '';
+  }
+
+  /**
+   * 切换发送/停止按钮外观
+   * @param {boolean} running - true=停止按钮(■), false=发送按钮(➤)
+   */
+  function setAgentRunning(running) {
+    _isAgentRunning = running;
+    if (!_sendBtn) return;
+    if (running) {
+      _sendBtn.textContent = '■';
+      _sendBtn.title = t('panel.stop_btn_title') || '停止';
+      _sendBtn.style.background = '#ef4444';
+      _sendBtn.disabled = false;
+    } else {
+      _sendBtn.textContent = '➤';
+      _sendBtn.title = t('panel.send_btn_title');
+      _sendBtn.style.background = 'linear-gradient(135deg, #667eea, #764ba2)';
+    }
   }
 
   // ============================================================
