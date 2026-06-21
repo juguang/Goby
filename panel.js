@@ -1816,6 +1816,14 @@
     /**
      * 切换会话侧栏显示
      */
+    /**
+     * 切换发送/停止按钮
+     * @param {boolean} running — true=停止按钮(■), false=发送按钮(➤)
+     */
+    setAgentRunning: function (running) {
+      setAgentRunning(running);
+    },
+
     toggleSessionSidebar: function () {
       if (typeof _toggleSessionSidebar === 'function') {
         _toggleSessionSidebar();
