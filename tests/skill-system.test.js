@@ -294,14 +294,14 @@ describe('SkillLoader', function () {
       expect(result.errors[0]).toContain('sendBeacon');
     });
 
-    it('代码编译失败报错', function () {
+    it('代码花括号不匹配报错', function () {
       var parsed = makeParseResult({
         actions: [{ name: 'bad', description: 'x', inputSchema: {}, rawCode: 'this is { not valid } js }}}}' }]
       });
       var result = SkillLoader.validateSkill(parsed);
 
       expect(result.valid).toBe(false);
-      expect(result.errors[0]).toContain('代码编译失败');
+      expect(result.errors[0]).toContain('花括号不匹配');
     });
 
     it('action 缺少 name 报错', function () {
@@ -353,18 +353,18 @@ describe('SkillLoader', function () {
       expect(fn({ a: 2, b: 3 })).toBe(5);
     });
 
-    it('execute 函数接收 pageContext 参数', function () {
+    it('execute 函数通过 args 接收参数', function () {
       var parsed = {
         name: 'PageOp',
         domain: 'test.com',
-        actions: [{ name: 'query', description: '', inputSchema: {}, rawCode: 'return pageContext.title;' }],
+        actions: [{ name: 'query', description: '', inputSchema: {}, rawCode: 'return args.title;' }],
         rawSource: ''
       };
       var result = SkillLoader.validateSkill(parsed);
 
       expect(result.valid).toBe(true);
       var fn = result.skillManifest.actions[0].execute;
-      expect(fn({}, { title: 'My Page' })).toBe('My Page');
+      expect(fn({ title: 'My Page' })).toBe('My Page');
     });
 
     it('已定义的函数形式代码被保留为函数', function () {
@@ -375,7 +375,7 @@ describe('SkillLoader', function () {
           name: 'double',
           description: '',
           inputSchema: {},
-          rawCode: 'function(args, pageContext) { return args.x * 2; }'
+          rawCode: 'function(args) { return args.x * 2; }'
         }],
         rawSource: ''
       };
@@ -985,7 +985,7 @@ describe('Skill Tool Registration (Plan 09-02)', function () {
         var tool = internals._activeSkillTools[0];
         var result = tool.execute({});
         expect(typeof result).toBe('string');
-        expect(result.indexOf('Error: skill crash_action 执行失败')).toBe(0);
+        expect(result.indexOf('Error: crash_action 失败')).toBe(0);
       });
     });
 
@@ -1180,7 +1180,7 @@ describe('Skill Tool Registration (Plan 09-02)', function () {
       return internals.registerSkillTools('throw-test.com').then(function (count) {
         expect(count).toBe(1);
         var result = internals._activeSkillTools[0].execute({});
-        expect(result).toMatch(/^Error: skill thrower 执行失败/);
+        expect(result).toMatch(/^Error: thrower 失败/);
       });
     });
 
@@ -1364,6 +1364,27 @@ describe('Skill Tool Registration (Plan 09-02)', function () {
           return 'chrome-extension://test-id/' + relativePath;
         });
       }
+      // Mock sendMessage to handle fetch-extension-file（预装通过 SW 读文件）
+      if (!chrome.runtime.sendMessage._fetchExtMocked) {
+        chrome.runtime.sendMessage._fetchExtMocked = true;
+        chrome.runtime.sendMessage.mockImplementation(function (msg) {
+          if (msg && msg.action === 'fetch-extension-file') {
+            var fs = require('fs');
+            var path = require('path');
+            var skillsDir = path.join(__dirname, '..', 'skills', 'builtin');
+            var fileName = (msg.path || '').split('/').pop();
+            var filePath = path.join(skillsDir, fileName);
+            try {
+              var content = fs.readFileSync(filePath, 'utf8');
+              return Promise.resolve({ ok: true, content: content });
+            } catch (e) {
+              return Promise.resolve({ ok: false, error: 'file not found' });
+            }
+          }
+          // fallback
+          return Promise.resolve(undefined);
+        });
+      }
 
       // Pre-seed gobySkills BEFORE content-script loads (controls preload behavior)
       if (preSeedSkills && Object.keys(preSeedSkills).length > 0) {
@@ -1385,25 +1406,8 @@ describe('Skill Tool Registration (Plan 09-02)', function () {
     }
 
     beforeEach(function () {
+      // fetch mock kept for backward compatibility (not used by preload anymore)
       originalFetch = global.fetch;
-
-      var fs = require('fs');
-      var path = require('path');
-      var skillsDir = path.join(__dirname, '..', 'skills', 'builtin');
-
-      global.fetch = jest.fn(function (url) {
-        var fileName = url.split('/').pop();
-        var filePath = path.join(skillsDir, fileName);
-        try {
-          var content = fs.readFileSync(filePath, 'utf8');
-          return Promise.resolve({
-            ok: true,
-            text: function () { return Promise.resolve(content); }
-          });
-        } catch (e) {
-          return Promise.resolve({ ok: false, text: function () { return Promise.resolve(''); } });
-        }
-      });
     });
 
     afterEach(function () {
@@ -1749,24 +1753,26 @@ describe('Skill Tool Registration (Plan 09-02)', function () {
         });
       }
 
-      // Mock fetch for built-in skill preload (prevents it from failing silently
-      // and leaving gobySkills empty when _preloadBuiltinSkills runs async during init)
-      var fs = require('fs');
-      var path = require('path');
-      var skillsDir = path.join(__dirname, '..', 'skills', 'builtin');
-      global.fetch = jest.fn(function (url) {
-        var fileName = url.split('/').pop();
-        var filePath = path.join(skillsDir, fileName);
-        try {
-          var content = fs.readFileSync(filePath, 'utf8');
-          return Promise.resolve({
-            ok: true,
-            text: function () { return Promise.resolve(content); }
-          });
-        } catch (e) {
-          return Promise.resolve({ ok: false, text: function () { return Promise.resolve(''); } });
-        }
-      });
+      // Mock sendMessage for fetch-extension-file（预装现在走 SW）
+      if (!chrome.runtime.sendMessage._fetchExtMocked) {
+        chrome.runtime.sendMessage._fetchExtMocked = true;
+        chrome.runtime.sendMessage.mockImplementation(function (msg) {
+          if (msg && msg.action === 'fetch-extension-file') {
+            var fs = require('fs');
+            var path = require('path');
+            var skillsDir = path.join(__dirname, '..', 'skills', 'builtin');
+            var fileName = (msg.path || '').split('/').pop();
+            var filePath = path.join(skillsDir, fileName);
+            try {
+              var content = fs.readFileSync(filePath, 'utf8');
+              return Promise.resolve({ ok: true, content: content });
+            } catch (e) {
+              return Promise.resolve({ ok: false, error: 'file not found' });
+            }
+          }
+          return Promise.resolve(undefined);
+        });
+      }
 
       // Seed gobySkills with test data before modules load
       _raw['gobySkills'] = {
