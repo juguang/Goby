@@ -2037,6 +2037,10 @@
       },
       timeout: 15000,
       execute: function (args) {
+        // Worker Tab 禁止调 page_navigate — 导航会丢失 workflow 上下文
+        if (window.__gobyWorkflowId) {
+          return 'Error: Worker Tab 禁止调 page_navigate。你已经在目标页面上，请直接用 page_query/page_evaluate 等工具操作当前页面，不要导航到其他 URL。完成任务后用 page_finish_workflow 回传结果。';
+        }
         // data: URL 不支持 content script 注入 → 导航后 Goby 不存在 → 永远不 resume
         if (typeof args.url === 'string' && args.url.indexOf('data:') === 0) {
           return 'Error: 不能导航到 data: URL（data: 协议不支持 Goby 注入，导航后 agent 会丢失）。请用其他方式展示内容（如在当前页直接用 page_evaluate 创建展示区域、或打开新 https 页面）。';
@@ -2127,6 +2131,10 @@
       },
       timeout: 15000,
       execute: function (args) {
+        // Worker Tab 不允许切换标签页 — 切换会丢失 workflow 上下文
+        if (window.__gobyWorkflowId) {
+          return Promise.resolve('Error: Worker Tab 禁止切换标签页。请聚焦当前任务页面，完成后再调 page_finish_workflow。');
+        }
         return new Promise(function (resolve) {
           sendToSW('tab-switch', {action: 'tab-switch', tabId: args.tabId}).then(function (response) {
             resolve(String(response));
