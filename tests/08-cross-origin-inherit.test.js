@@ -30,9 +30,10 @@ function seedSession(sessionId, origin, messages, updatedAt) {
     messageCount: messages.length,
     preview: '',
     messages: messages,
-    // Phase 8 fix: 跨域继承现在要求 interrupted=true（模拟 page_navigate 打断）
+    // D-01 跨域继承要求 interrupted + navigatedByAgent 双 true（模拟 page_navigate）
     interrupted: true,
-    interruptedAt: Date.now()
+    interruptedAt: Date.now(),
+    navigatedByAgent: true
   };
   chrome.storage.local._raw.gobySessions = sessions;
 }
