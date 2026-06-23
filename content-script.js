@@ -3253,6 +3253,7 @@
             // CS 直接 fetch(chrome.runtime.getURL(...)) 在页面 origin 中运行
             // 可能因跨域返回非预期内容。SW 原生访问扩展资源，返回正确文本。
             return sendToSW('fetch-extension-file', { action: 'fetch-extension-file', path: path }).then(function (resp) {
+              console.log('[preload] fetch-extension-file 返回:', path, resp && resp.ok, typeof resp === 'object' ? Object.keys(resp).join(',') : typeof resp);
               if (!resp || !resp.ok) { console.error('[preload] fetch-extension-file 失败', path, resp && resp.error); return undefined; }
               var markdown = resp.content;
 
@@ -3266,15 +3267,20 @@
               }
               var validation = SkillLoader.validateSkill(parseResult);
               if (!validation.valid) { console.error('[preload] 验证失败', path, validation.errors.join('; ')); return undefined; }
-              console.log('[preload] 安装成功:', path);
+              console.log('[preload] 验证通过，准备安装:', path);
               return GobyStorage.saveSkill(validation.skillManifest.domain, {
                 name: validation.skillManifest.name,
                 description: validation.skillManifest.description,
                 domain: validation.skillManifest.domain,
                 actions: validation.skillManifest.actions,
                 source: 'builtin'
+              }).then(function () {
+                console.log('[preload] 安装成功:', path);
+              }).catch(function (e) {
+                console.error('[preload] saveSkill 失败:', path, e.message);
               });
-            }).catch(function () {
+            }).catch(function (err) {
+              console.error('[preload] 异常', path, err && err.message || err);
               return undefined;
             });
           });
