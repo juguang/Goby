@@ -3329,17 +3329,10 @@
           continue;
         }
 
-        // 将 browsing-skills 格式的结果转换为 agent loop 兼容的字符串
+        // Skill action 通过 page_evaluate 的 SW 通道执行
+        // （chrome.scripting.executeScript 在 MAIN world 运行，绕过页面 CSP）
+        // 避免 content script 中的 new Function() 被页面 CSP 拦截。
         var actionName = action.name;
-        // 从 rawCode 创建执行函数（content script 独立世界，不受页面 CSP 约束）
-        var actionExecute;
-        try {
-          actionExecute = new Function('return (' + action.rawCode + ')')();
-        } catch (e) {
-          // CSP 限制或语法错误 → 跳过
-          continue;
-        }
-
         var toolDef = {
           type: 'function',
           function: {
@@ -3349,29 +3342,39 @@
           },
           timeout: 30000,
           execute: function (params) {
-            try {
-              var result = actionExecute(params);
-              // browsing-skills 标准返回格式: { content: [{ type: "text", text: "..." }] }
-              if (result && Array.isArray(result.content)) {
-                var texts = [];
-                for (var ci = 0; ci < result.content.length; ci++) {
-                  if (result.content[ci] && typeof result.content[ci].text === 'string') {
-                    texts.push(result.content[ci].text);
+            return new Promise(function (resolve) {
+              // 构造执行表达式：调用 skill 函数并序列化结果
+              var expr = 'JSON.stringify((function(){' +
+                'var _skillFn = ' + action.rawCode + ';' +
+                'var _params = ' + JSON.stringify(params || {}) + ';' +
+                'var _result = _skillFn(_params);' +
+                'return _result;' +
+              '})())';
+              chrome.runtime.sendMessage({ action: 'page-evaluate', expression: expr }, function (response) {
+                if (chrome.runtime.lastError) {
+                  resolve('Error: skill ' + actionName + ' 执行失败 - ' + chrome.runtime.lastError.message);
+                  return;
+                }
+                try {
+                  var result = JSON.parse(String(response));
+                  if (result && Array.isArray(result.content)) {
+                    var texts = [];
+                    for (var ci = 0; ci < result.content.length; ci++) {
+                      if (result.content[ci] && typeof result.content[ci].text === 'string') {
+                        texts.push(result.content[ci].text);
+                      }
+                    }
+                    resolve(texts.length === 1 ? texts[0] : JSON.stringify(texts.length > 0 ? texts : result));
+                  } else if (typeof result === 'string') {
+                    resolve(result);
+                  } else {
+                    resolve(JSON.stringify(result));
                   }
+                } catch (e) {
+                  resolve(String(response));
                 }
-                if (texts.length === 1) {
-                  return texts[0];
-                }
-                return JSON.stringify(texts.length > 0 ? texts : result);
-              }
-              // 直接返回字符串或可序列化结果
-              if (typeof result === 'string') {
-                return result;
-              }
-              return JSON.stringify(result);
-            } catch (e) {
-              return 'Error: skill ' + actionName + ' 执行失败 - ' + (e.message || String(e));
-            }
+              });
+            });
           }
         };
 
