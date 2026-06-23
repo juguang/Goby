@@ -3248,12 +3248,14 @@
       for (var s = 0; s < BUILTIN_SKILLS.length; s++) {
         (function (path) {
           chain = chain.then(function () {
-            var url = chrome.runtime.getURL(path);
             console.log('[preload] 加载:', path);
-            return fetch(url).then(function (res) {
-              if (!res.ok) { console.error('[preload] fetch ' + res.status, path); return undefined; }
-              return res.text();
-            }).then(function (markdown) {
+            // 通过 SW 读取扩展自带的 SKILL.md 文件
+            // CS 直接 fetch(chrome.runtime.getURL(...)) 在页面 origin 中运行
+            // 可能因跨域返回非预期内容。SW 原生访问扩展资源，返回正确文本。
+            return sendToSW('fetch-extension-file', { action: 'fetch-extension-file', path: path }).then(function (resp) {
+              if (!resp || !resp.ok) { console.error('[preload] fetch-extension-file 失败', path, resp && resp.error); return undefined; }
+              var markdown = resp.content;
+
               if (!markdown) { console.error('[preload] 空内容', path); return undefined; }
               var parseResult;
               try {
@@ -3263,7 +3265,7 @@
                 return undefined;
               }
               var validation = SkillLoader.validateSkill(parseResult);
-              if (!validation.valid) { console.error('[preload] 验证失败', path, validation.error); return undefined; }
+              if (!validation.valid) { console.error('[preload] 验证失败', path, validation.errors.join('; ')); return undefined; }
               console.log('[preload] 安装成功:', path);
               return GobyStorage.saveSkill(validation.skillManifest.domain, {
                 name: validation.skillManifest.name,

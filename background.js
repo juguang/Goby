@@ -1055,6 +1055,32 @@
       return true; // 异步响应
     }
 
+    // fetch-extension-file: SW 读扩展自带的资源文件（如内置 SKILL.md）
+    //   CS 的 fetch(chrome.runtime.getURL(...)) 在页面 origin 上下文中运行，
+    //   可能因跨域限制返回非预期内容。SW 原生访问扩展资源，返回文本给 CS。
+    if (message.action === 'fetch-extension-file') {
+      var filePath = message.path;
+      if (!filePath || typeof filePath !== 'string') {
+        sendResponse({ ok: false, error: '缺少 path 参数' });
+        return false;
+      }
+      var extUrl = chrome.runtime.getURL(filePath);
+      fetch(extUrl).then(function (res) {
+        if (!res.ok) {
+          sendResponse({ ok: false, error: 'HTTP ' + res.status });
+          return;
+        }
+        return res.text();
+      }).then(function (text) {
+        if (text !== undefined) {
+          sendResponse({ ok: true, content: text });
+        }
+      }).catch(function (err) {
+        sendResponse({ ok: false, error: 'fetch 失败: ' + (err.message || String(err)) });
+      });
+      return true; // 异步响应
+    }
+
     // skill-list: CS → SW 读取所有已安装技能
     if (message.action === 'skill-list') {
       chrome.storage.local.get(['gobySkills']).then(function (result) {
