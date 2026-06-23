@@ -3382,6 +3382,7 @@
         registered++;
       }
 
+      console.log('[skill] registerSkillTools: ' + registered + ' actions for ' + domain + ', _activeSkillTools=' + _activeSkillTools.length);
       return registered;
     }).catch(function () {
       // storage 读取失败 — 静默降级
@@ -4130,10 +4131,12 @@
    */
   function _autoRegisterSkills() {
     var hostname = window.location.hostname;
+    console.log('[skill] _autoRegisterSkills hostname:', hostname);
     if (!hostname) return;
 
     // 先尝试精确匹配
     GobyStorage.getSkill(hostname).then(function (skill) {
+      console.log('[skill] getSkill(' + hostname + '):', skill ? 'found' : 'not found');
       if (skill && Array.isArray(skill.actions) && skill.actions.length > 0) {
         return registerSkillTools(hostname);
       }
