@@ -3325,13 +3325,20 @@
       var registered = 0;
       for (var i = 0; i < skill.actions.length; i++) {
         var action = skill.actions[i];
-        if (!action.name || typeof action.execute !== 'function') {
+        if (!action.name || !action.rawCode) {
           continue;
         }
 
         // 将 browsing-skills 格式的结果转换为 agent loop 兼容的字符串
         var actionName = action.name;
-        var actionExecute = action.execute;
+        // 从 rawCode 创建执行函数（content script 独立世界，不受页面 CSP 约束）
+        var actionExecute;
+        try {
+          actionExecute = new Function('return (' + action.rawCode + ')')();
+        } catch (e) {
+          // CSP 限制或语法错误 → 跳过
+          continue;
+        }
 
         var toolDef = {
           type: 'function',
