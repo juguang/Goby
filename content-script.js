@@ -3333,12 +3333,17 @@
         // （chrome.scripting.executeScript 在 MAIN world 运行，绕过页面 CSP）
         // 避免 content script 中的 new Function() 被页面 CSP 拦截。
         var actionName = action.name;
+        // 兼容 browsing-skills 的 inputSchema 格式（可能缺少顶层 type:"object"）
+        var schema = action.inputSchema || {};
+        if (!schema.type) {
+          schema = { type: 'object', properties: schema };
+        }
         var toolDef = {
           type: 'function',
           function: {
             name: actionName,
             description: action.description || '',
-            parameters: action.inputSchema || { type: 'object', properties: {} }
+            parameters: schema
           },
           timeout: 30000,
           execute: function (params) {
