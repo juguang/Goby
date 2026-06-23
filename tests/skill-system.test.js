@@ -1992,3 +1992,110 @@ describe('Skill Tool Registration (Plan 09-02)', function () {
       expect(url.trim()).toBe('');
     });
   });
+
+  // =============================================================
+  //  自动技能生成 (Auto-Skill)
+  // =============================================================
+
+  describe('Auto-Skill Generation', function () {
+    var internals;
+
+    beforeEach(function () {
+      // 确保 gobySkills 为空（让 _maybeAutoCreateSkill 可以创建新技能）
+      chrome.storage.local._raw['gobySkills'] = {};
+      // 重新加载模块获取最新的 internals
+      jest.resetModules();
+      require('./__mocks__/chrome.js');
+      var util = require('util');
+      global.TextEncoder = util.TextEncoder;
+      global.TextDecoder = util.TextDecoder;
+      var purifyFactory = require('../lib/purify.min.js');
+      window.DOMPurify = purifyFactory(window);
+      window.marked = require('../lib/marked.min.js');
+      require('../lib/i18n.js');
+      require('../storage.js');
+      require('../panel.js');
+      require('../content-script.js');
+      internals = global.__gobyInternals || {};
+    });
+
+    it('_autoSkillCounter 初始值为 0', function () {
+      var state = internals._agentState;
+      expect(state._autoSkillCounter).toBe(0);
+    });
+
+    it('_autoSkillCounter 在 pushResultsToMessages 中递增', function () {
+      var state = internals._agentState;
+      state._autoSkillCounter = 0;
+      internals._pushResultsToMessages([
+        { tool_call_id: '1', name: 'page_fill', content: 'filled' },
+        { tool_call_id: '2', name: 'page_click', content: 'clicked' }
+      ]);
+      expect(state._autoSkillCounter).toBe(2);
+    });
+
+    it('_maybeAutoCreateSkill 在已有 skill 时跳过 LLM', function () {
+      // Pre-seed an existing skill for the test domain
+      chrome.storage.local._raw['gobySkills'] = {
+        'example.com': {
+          name: 'Existing', description: 'Already there',
+          domain: 'example.com', actions: [], source: 'manual'
+        }
+      };
+      // Mock sendMessage — if LLM is called, the mock will record it
+      var llmCalled = false;
+      var origImpl = chrome.runtime.sendMessage.getMockImplementation();
+      chrome.runtime.sendMessage.mockImplementation(function (msg) {
+        if (msg && msg.action === 'llm-request') { llmCalled = true; }
+        return Promise.resolve(undefined);
+      });
+      return internals._maybeAutoCreateSkill().then(function () {
+        // Shouldn't call LLM since skill already exists
+        expect(llmCalled).toBe(false);
+      });
+    });
+
+    it('_maybeAutoCreateSkill 无 DOM 操作时跳过 LLM', function () {
+      var state = internals._agentState;
+      state.messages = [
+        { role: 'user', content: 'hello' },
+        { role: 'assistant', content: 'hi!' },
+        { role: 'assistant', tool_calls: [{ function: { name: 'calculator' } }] },
+        { role: 'tool', content: '42' }
+      ];
+      var llmCalled = false;
+      var origImpl = chrome.runtime.sendMessage.getMockImplementation();
+      chrome.runtime.sendMessage.mockImplementation(function (msg) {
+        if (msg && msg.action === 'llm-request') { llmCalled = true; }
+        return Promise.resolve(undefined);
+      });
+      return internals._maybeAutoCreateSkill().then(function () {
+        expect(llmCalled).toBe(false); // calculator is not a DOM tool
+      });
+    });
+
+    it('_maybeAutoCreateSkill 有 DOM 操作时发起 LLM 调用', function () {
+      var state = internals._agentState;
+      state.messages = [
+        { role: 'user', content: '搜索 iPad' },
+        { role: 'assistant', tool_calls: [{ function: { name: 'page_fill' } }] },
+        { role: 'tool', content: 'filled search box' },
+        { role: 'assistant', tool_calls: [{ function: { name: 'page_click' } }] },
+        { role: 'tool', content: 'clicked search' },
+        { role: 'assistant', tool_calls: [{ function: { name: 'page_query' } }] },
+        { role: 'tool', content: 'results found' },
+        { role: 'assistant', tool_calls: [{ function: { name: 'page_evaluate' } }] },
+        { role: 'tool', content: 'extracted data' }
+      ];
+      // Mock sendMessage to confirm LLM request was sent
+      var llmRequestSent = false;
+      chrome.runtime.sendMessage.mockImplementation(function (msg) {
+        if (msg && msg.action === 'llm-request') { llmRequestSent = true; }
+        return Promise.resolve(undefined);
+      });
+      return internals._maybeAutoCreateSkill().then(function () {
+        // DOM 操作存在 → 应该调用 LLM
+        expect(llmRequestSent).toBe(true);
+      });
+    });
+  });

@@ -3983,7 +3983,11 @@
     _autoRegisterSkills: _autoRegisterSkills,
     _domainMatchesSkill: _domainMatchesSkill,
     // Plan 09-03: 内置技能预装
-    _preloadBuiltinSkills: _preloadBuiltinSkills
+    _preloadBuiltinSkills: _preloadBuiltinSkills,
+    // Auto-skill: 自动技能生成
+    _pushResultsToMessages: pushResultsToMessages,
+    _maybeAutoCreateSkill: _maybeAutoCreateSkill,
+    _callLLM: callLLM
   };
 
   // 暴露 GobyAgent 到全局
@@ -4204,10 +4208,10 @@
    */
   function _maybeAutoCreateSkill() {
     var domain = window.location.hostname;
-    if (!domain) return;
+    if (!domain) return Promise.resolve();
 
     // 检查该 domain 是否已有技能（避免重复创建）
-    GobyStorage.getSkill(domain).then(function (existing) {
+    return GobyStorage.getSkill(domain).then(function (existing) {
       if (existing) { return; } // 已有技能，跳过
 
       // 收集最近 20 条非 system 消息
