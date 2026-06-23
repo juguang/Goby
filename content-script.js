@@ -4098,7 +4098,9 @@
           }
           // 只在源 session 被导航打断时（interrupted=true）才继承上下文。
           // 用户手动打开新页面时源 session 的 interrupted=false，不应导入其他对话信息。
-          if (loaded.interrupted !== true) {
+          // 只在源 session 被 page_navigate 打断时才继承上下文。
+          // navigatedByAgent 区分 page_navigate（agent 导航）和手工打开/停止 agent
+          if (loaded.interrupted !== true || loaded.navigatedByAgent !== true) {
             return null;
           }
           // D-04: 取最后 5 条（slice(-5)），并在前面插入 user-role marker

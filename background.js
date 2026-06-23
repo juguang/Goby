@@ -717,6 +717,7 @@
             if (matchedKey) {
               sessions[matchedKey].interrupted = true;
               sessions[matchedKey].interruptedAt = Date.now();
+              sessions[matchedKey].navigatedByAgent = true;
               return chrome.storage.local.set({ gobySessions: sessions });
             }
           }).catch(function () { /* 静默降级 */ })
