@@ -4072,13 +4072,31 @@
     // 异步尝试加载已保存会话（loadSession 会替换初始创建）
     loadSession(origin).then(function (session) {
       if (session) {
-        // D-02: 同域名导航走原 loadSession 路径（已有 session），不触发跨域继承
+        // 优先检查：当前 session 自身的 interrupted 标记
         if (session.interrupted === true &&
             session.interruptedAt && Date.now() - session.interruptedAt < 60000) {
-          // 续跑 — 通过 window.GobyAgent.processAgentMessage 调用以便测试可 spy
           window.GobyAgent.processAgentMessage(null, { resume: true });
+          return null;
         }
-        return null;
+        // 检查是否从其他 origin 的 page_navigate 跳过来
+        // （当前 session 存在但未被中断，可能是之前正常访问留下的旧 session）
+        return chrome.storage.local.get('lastActiveSessions').then(function (lasResult) {
+          var lasEntries = lasResult.lastActiveSessions || [];
+          for (var lei = 0; lei < lasEntries.length; lei++) {
+            if (lasEntries[lei].origin === origin) continue;
+            // 找到最近一条非当前 origin 的记录
+            return chrome.storage.local.get('gobySessions').then(function (gsResult) {
+              var gsSessions = gsResult.gobySessions || {};
+              var crossSession = gsSessions[lasEntries[lei].sessionId];
+              if (crossSession && crossSession.navigatedByAgent === true &&
+                  crossSession.interruptedAt && Date.now() - crossSession.interruptedAt < 60000) {
+                window.GobyAgent.processAgentMessage(null, { resume: true });
+              }
+              return null;
+            });
+          }
+          return null;
+        });
       }
 
       // D-01: 新 origin 无 session → 跨域继承最近他域 session 的最后 5 条 messages
