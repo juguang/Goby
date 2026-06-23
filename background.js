@@ -601,6 +601,10 @@
       }
       chrome.storage.local.get('gobySessions').then(function (result) {
         var sessions = result.gobySessions || {};
+        // 保留 navigatedByAgent（tab-navigate handler 设的标记，防 CS saveSession 覆盖）
+        if (sessions[sessionId] && sessions[sessionId].navigatedByAgent) {
+          sessionData.navigatedByAgent = true;
+        }
         sessions[sessionId] = sessionData;
         return chrome.storage.local.set({ gobySessions: sessions });
       }).then(function () {
@@ -804,7 +808,7 @@
             if (message.task && typeof message.task === 'string' && message.task.trim()) {
               initialUserMessage = '[Workflow ' + workflowId + '] 你是 worker Tab，已经在目标页面上（URL: ' + workerOrigin + '）。任务：' + message.task.trim() +
                 '\n\n执行约束：' +
-                '\n1. **禁止调 page_navigate** —— 你已经在目标页面，跳走会导致 session 丢失、workflow 卡死。如需去其他页面，告知 chat Tab 后由它启动新 workflow。' +
+                '\n1. 尽量用当前页面工具（page_query/page_evaluate 等）完成任务。如果确实需要跳转到其他页面才能获取信息，允许调 page_navigate，跳转后会自动恢复继续执行。' +
                 '\n2. 直接用 page_query / page_evaluate / page_analyze / page_screenshot 等工具操作当前页面。' +
                 '\n3. **你的普通文本回复不会显示给用户**。完成任务后，**唯一**与用户通信的方式是调用 page_finish_workflow(summary) 工具，summary 参数写你想告诉用户的完整结果和总结。' +
                 '\n4. 禁止使用普通文本回复代替 page_finish_workflow 调用——那等于什么都没发出去，chat Tab 会永久卡死。';
