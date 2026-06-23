@@ -1149,7 +1149,8 @@
     sessionId: '',           // 当前会话 ID (Plan 03-03)
     toolCallCounter: 0,     // 会话工具调用计数（AGENT-05 限制保护）
     roundCount: 0,          // 会话累计对话轮数（Phase 03 UAT 测试 4：跨消息累计，不在 processAgentMessage 末尾重置）
-    stopRequested: false    // 用户点击停止按钮 → agent loop 检查后退出
+    stopRequested: false,   // 用户点击停止按钮 → agent loop 检查后退出
+    _autoSkillCounter: 0    // 自动技能生成计数器（每 8 次工具调用触发检查）
   };
 
   // ---- Agent 循环内部状态 ----
@@ -2721,6 +2722,7 @@
     _agentState.toolCallCounter = 0;
     _agentState.roundCount = 0;
     _agentState.isProcessing = false;
+    _agentState._autoSkillCounter = 0;
 
     // 重置 UI：先清空旧的聊天气泡（含遗留工具调用），再显示欢迎消息
     if (window.GobyPanel) {
@@ -3325,14 +3327,12 @@
       var registered = 0;
       for (var i = 0; i < skill.actions.length; i++) {
         var action = skill.actions[i];
-        if (!action.name || !action.rawCode) {
-          continue;
-        }
+        if (!action.name) continue;
+        if (!action.rawCode && !action.execute) continue;
 
-        // Skill action 通过 page_evaluate 的 SW 通道执行
-        // （chrome.scripting.executeScript 在 MAIN world 运行，绕过页面 CSP）
-        // 避免 content script 中的 new Function() 被页面 CSP 拦截。
+        // 优先用预编译 execute 函数，否则通过 page_evaluate SW 通道执行
         var actionName = action.name;
+        var hasPrecompiled = action.execute && typeof action.execute === 'function';
         // 兼容 browsing-skills 的 inputSchema 格式（可能缺少顶层 type:"object"）
         var schema = action.inputSchema || {};
         if (!schema.type) {
@@ -3347,8 +3347,24 @@
           },
           timeout: 30000,
           execute: function (params) {
+            // 预编译函数直接执行（测试环境 / CSP 宽松页面）
+            if (hasPrecompiled) {
+              try {
+                var r = action.execute(params);
+                if (r && Array.isArray(r.content)) {
+                  var texts = [];
+                  for (var ci = 0; ci < r.content.length; ci++) {
+                    if (r.content[ci] && typeof r.content[ci].text === 'string') texts.push(r.content[ci].text);
+                  }
+                  return texts.length === 1 ? texts[0] : JSON.stringify(texts.length > 0 ? texts : r);
+                }
+                return typeof r === 'string' ? r : JSON.stringify(r);
+              } catch (e) {
+                return 'Error: ' + actionName + ' 失败 - ' + (e.message || e);
+              }
+            }
+            // rawCode 通过 page_evaluate SW 通道执行（绕过页面 CSP）
             return new Promise(function (resolve) {
-              // 构造执行表达式：调用 skill 函数并序列化结果
               var expr = 'JSON.stringify((function(){' +
                 'var _skillFn = ' + action.rawCode + ';' +
                 'var _params = ' + JSON.stringify(params || {}) + ';' +
@@ -3527,6 +3543,9 @@
    * @param {Array<{tool_call_id: string, name: string, content: string}>} results
    */
   function pushResultsToMessages(results) {
+    // 自动技能生成计数器（每个工具调用 +1）
+    _agentState._autoSkillCounter += (results && results.length) || 0;
+
     for (var i = 0; i < results.length; i++) {
       var r = results[i];
 
@@ -3827,6 +3846,12 @@
         window.GobyAgent.saveSession();
         break;
       }
+    }
+
+    // Phase 9: 自动技能生成 — 每 8 次工具调用后检查是否有可提炼的操作模式
+    if (_agentState._autoSkillCounter >= 8) {
+      _agentState._autoSkillCounter = 0;
+      _maybeAutoCreateSkill();
     }
 
     // 清理状态
@@ -4171,6 +4196,99 @@
   function _domainMatchesSkill(host, skillDomain) {
     if (!host || !skillDomain) return false;
     return host === skillDomain || host.indexOf('.' + skillDomain, host.length - skillDomain.length - 1) !== -1;
+  }
+
+  /**
+   * _maybeAutoCreateSkill — 检查是否可以从当前会话提炼可复用的网站技能
+   * 筛选最近 20 条消息中的 tool call 模式 → LLM 生成 SKILL.md → 保存
+   */
+  function _maybeAutoCreateSkill() {
+    var domain = window.location.hostname;
+    if (!domain) return;
+
+    // 检查该 domain 是否已有技能（避免重复创建）
+    GobyStorage.getSkill(domain).then(function (existing) {
+      if (existing) { return; } // 已有技能，跳过
+
+      // 收集最近 20 条非 system 消息
+      var recentMsgs = _agentState.messages.slice(-20);
+      var toolCalls = [];
+      for (var i = 0; i < recentMsgs.length; i++) {
+        var m = recentMsgs[i];
+        if (m.role === 'assistant' && m.tool_calls) {
+          var tcs = Array.isArray(m.tool_calls) ? m.tool_calls : [];
+          for (var t = 0; t < tcs.length; t++) {
+            toolCalls.push(tcs[t].function ? tcs[t].function.name : '');
+          }
+        }
+      }
+      var uniqueTools = [];
+      for (var u = 0; u < toolCalls.length; u++) {
+        if (uniqueTools.indexOf(toolCalls[u]) === -1) uniqueTools.push(toolCalls[u]);
+      }
+
+      // 只对有明显页面操作模式的 domain 生成技能（至少用到 DOM 操作工具）
+      var domTools = ['page_fill', 'page_click', 'page_submit', 'page_query', 'page_list_elements', 'page_evaluate', 'page_wait'];
+      var hasDomOps = false;
+      for (var d = 0; d < uniqueTools.length; d++) {
+        if (domTools.indexOf(uniqueTools[d]) !== -1) { hasDomOps = true; break; }
+      }
+      if (!hasDomOps) return;
+
+      // 构建 LLM 提示：从工具调用历史提取操作模式，生成 SKILL.md
+      var historyLines = [];
+      for (var h = 0; h < recentMsgs.length; h++) {
+        var hm = recentMsgs[h];
+        var role = hm.role;
+        var content = '';
+        if (hm.tool_calls) {
+          var tcnames = [];
+          var atcs = Array.isArray(hm.tool_calls) ? hm.tool_calls : [];
+          for (var tc = 0; tc < atcs.length; tc++) {
+            tcnames.push(atcs[tc].function ? atcs[tc].function.name : '?');
+          }
+          content = '[调用工具: ' + tcnames.join(', ') + ']';
+        } else if (hm.content) {
+          content = (typeof hm.content === 'string' ? hm.content : '').substring(0, 200);
+        }
+        if (content) historyLines.push(role + ': ' + content);
+      }
+
+      var prompt = [
+        { role: 'system', content: '你是一个技能生成器。根据用户在网站上的操作历史，生成一个 browsing-skills 格式的 SKILL.md 文件。只输出 SKILL.md 内容，不要解释。' },
+        { role: 'user', content: '网域: ' + domain + '\n\n操作历史：\n' + historyLines.join('\n') + '\n\n请基于这些操作生成一个可复用的技能。格式要求：\n---\nname: <技能名>\ndescription: <描述>\ndomain: ' + domain + '\n---\n\n## <action名>\nDescription: <描述>\nInput: <JSON schema>\n```javascript\nfunction(params) { ... return { content: [{ type: "text", text: result }] }; }\n```\n\n要求：\n1. 提取 1-3 个核心操作模式\n2. JavaScript 用 var 不用 let/const\n3. 使用通用的 DOM 选择器（避免过于具体的 class/id）\n4. Input schema 用标准 JSON Schema 格式' }
+      ];
+
+      return callLLM(prompt);
+    }).then(function (response) {
+      if (!response || !response.choices) return;
+      var content = response.choices[0].message.content;
+      if (!content) return;
+
+      // 提取 SKILL.md 内容（去除可能的 markdown 代码块包裹）
+      var md = content.replace(/^```(?:markdown)?\s*\n?/i, '').replace(/\n?```\s*$/, '').trim();
+      if (md.indexOf('---') !== 0) return; // 不是有效的 SKILL.md
+
+      try {
+        var parsed = SkillLoader.parseSkillMarkdown(md);
+        var validation = SkillLoader.validateSkill(parsed);
+        if (validation.valid) {
+          return GobyStorage.saveSkill(validation.skillManifest.domain, {
+            name: validation.skillManifest.name,
+            description: validation.skillManifest.description,
+            domain: validation.skillManifest.domain,
+            actions: validation.skillManifest.actions,
+            source: 'auto'
+          }).then(function () {
+            GobyPanel.appendMessage('bot', '🤖 已为 ' + domain + ' 自动创建技能（' + validation.skillManifest.actions.length + ' 个操作）。下次访问自动加载。');
+          });
+        }
+      } catch (e) {
+        // 生成失败 — 静默降级
+      }
+    }).catch(function () {
+      // 静默降级
+    });
   }
 
   // URL 变化监听 (SESS-01, D-16)
