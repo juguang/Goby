@@ -688,7 +688,6 @@
     fileBtn.className = 'goby-skill-import-file-btn';
     var uploadText = t('modal.skills_upload');
     fileBtn.textContent = (uploadText && uploadText !== 'modal.skills_upload') ? uploadText : '📁 上传文件';
-    fileBtn.style.cssText = 'margin-left:4px;';
     fileBtn.addEventListener('click', function () { fileInput.click(); });
     importRow.appendChild(fileBtn);
     importRow.appendChild(fileInput);

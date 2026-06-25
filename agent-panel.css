@@ -418,6 +418,24 @@
   background: #f3f4f6;
 }
 
+.goby-skill-import-file-btn {
+  height: 32px;
+  padding: 0 12px;
+  border: 1px solid #e5e7eb;
+  border-radius: 4px;
+  background: #ffffff;
+  color: #6b7280;
+  font-size: 12px;
+  font-family: inherit;
+  cursor: pointer;
+  white-space: nowrap;
+  margin-left: 4px;
+}
+
+.goby-skill-import-file-btn:hover {
+  background: #f3f4f6;
+}
+
 .goby-skill-feedback {
   font-size: 11px;
   padding: 4px 8px;
