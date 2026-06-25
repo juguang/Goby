@@ -3306,13 +3306,18 @@
    * @param {string} domain - 网站域名 (e.g., "amazon.com")
    * @returns {Promise<number>} 注册的工具数量
    */
-  function registerSkillTools(domain) {
-    // 先清除旧技能工具
-    unregisterSkillTools();
+  var _registeredSkillDomain = null;
 
+  function registerSkillTools(domain) {
     if (!domain || typeof domain !== 'string') {
       return Promise.resolve(0);
     }
+    // 幂等：同一域名不重复注册
+    if (_registeredSkillDomain === domain && _activeSkillTools.length > 0) {
+      return Promise.resolve(_activeSkillTools.length);
+    }
+    // 先清除旧技能工具
+    unregisterSkillTools();
 
     return GobyStorage.getSkill(domain).then(function (skill) {
       if (!skill || !Array.isArray(skill.actions) || skill.actions.length === 0) {
@@ -3411,6 +3416,7 @@
       }
 
       console.log('[skill] registerSkillTools: ' + registered + ' actions for ' + domain + ', _activeSkillTools=' + _activeSkillTools.length);
+      _registeredSkillDomain = domain;
       return registered;
     }).catch(function () {
       // storage 读取失败 — 静默降级
@@ -3424,6 +3430,7 @@
    */
   function unregisterSkillTools() {
     _activeSkillTools.length = 0;
+    _registeredSkillDomain = null;
   }
 
   // ================================================================
