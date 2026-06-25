@@ -4082,9 +4082,11 @@
         if (session.interrupted === true &&
             session.interruptedAt && Date.now() - session.interruptedAt < 60000) {
           // 先注册技能工具再 resume（否则 agent 第一轮看不到 skill 工具）
-          _autoRegisterSkills();
-          window.GobyAgent.processAgentMessage(null, { resume: true });
-          return null;
+          // 返回 Promise 链让外层 .then() 等注册完成
+          return _autoRegisterSkills().then(function () {
+            window.GobyAgent.processAgentMessage(null, { resume: true });
+            return null;
+          });
         }
         // 检查是否从其他 origin 的 page_navigate 跳过来
         // （当前 session 存在但未被中断，可能是之前正常访问留下的旧 session）
@@ -4098,8 +4100,10 @@
               var crossSession = gsSessions[lasEntries[lei].sessionId];
               if (crossSession && crossSession.navigatedByAgent === true &&
                   crossSession.interruptedAt && Date.now() - crossSession.interruptedAt < 60000) {
-                _autoRegisterSkills();
-                window.GobyAgent.processAgentMessage(null, { resume: true });
+                return _autoRegisterSkills().then(function () {
+                  window.GobyAgent.processAgentMessage(null, { resume: true });
+                  return null;
+                });
               }
               return null;
             });
@@ -4180,8 +4184,10 @@
               }
             }
             if (!isWorkflowInterrupted) {
-              _autoRegisterSkills();
-              window.GobyAgent.processAgentMessage(null, { resume: true });
+              return _autoRegisterSkills().then(function () {
+                window.GobyAgent.processAgentMessage(null, { resume: true });
+                return null;
+              });
             }
           }
           // 持久化（让 SW 把当前 session 加入 lastActiveSessions 索引）
