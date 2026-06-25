@@ -1260,8 +1260,7 @@ describe('Skill Tool Registration (Plan 09-02)', function () {
       expect(r.validation.skillManifest.domain).toBe('amazon.com');
       expect(r.validation.skillManifest.actions).toHaveLength(2);
       var names = r.validation.skillManifest.actions.map(function (a) { return a.name; });
-      expect(names).toContain('amazon-search');
-      expect(names).toContain('amazon-product');
+      expect(names).toContain('amazon');
       r.validation.skillManifest.actions.forEach(function (action) {
         expect(action.name).toBeTruthy();
         expect(action.description).toBeDefined();
@@ -1780,7 +1779,7 @@ describe('Skill Tool Registration (Plan 09-02)', function () {
           name: 'Amazon Search',
           description: 'Search Amazon',
           domain: 'amazon.com',
-          actions: [{ name: 'amazon-search', description: 'Search', inputSchema: {}, execute: function () {} }, { name: 'amazon-product', description: 'Product', inputSchema: {}, execute: function () {} }],
+          actions: [{ name: 'amazon', description: 'Search and extract on Amazon', inputSchema: {}, execute: function () {} }],
           source: 'builtin',
           enabled: true,
           installedAt: Date.now()
