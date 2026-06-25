@@ -677,6 +677,20 @@
     importRow.appendChild(importInput);
     importRow.appendChild(importConfirm);
     importRow.appendChild(importCancel);
+
+    // 文件上传按钮
+    var fileInput = document.createElement('input');
+    fileInput.type = 'file';
+    fileInput.accept = '.md,.SKILL.md,.txt';
+    fileInput.id = 'goby-skill-file-input';
+    fileInput.style.display = 'none';
+    var fileBtn = document.createElement('button');
+    fileBtn.className = 'goby-skill-import-file-btn';
+    fileBtn.textContent = t('modal.skills_upload') || '📁 上传文件';
+    fileBtn.style.cssText = 'margin-left:4px;';
+    fileBtn.addEventListener('click', function () { fileInput.click(); });
+    importRow.appendChild(fileBtn);
+    importRow.appendChild(fileInput);
     skillsSection.appendChild(importRow);
 
     // 反馈信息
@@ -729,6 +743,49 @@
       importRow.style.display = 'none';
       importInput.value = '';
       hideSkillFeedback();
+    });
+
+    // 文件上传导入
+    fileInput.addEventListener('change', function () {
+      var file = fileInput.files && fileInput.files[0];
+      if (!file) return;
+      var reader = new FileReader();
+      reader.onload = function (e) {
+        var markdown = e.target.result;
+        if (!markdown || typeof markdown !== 'string') {
+          showSkillFeedback('文件内容为空', 'error');
+          return;
+        }
+        // 直接走 parse + validate + save（不需要 SW 下载）
+        var parseResult;
+        try {
+          parseResult = SkillLoader.parseSkillMarkdown(markdown);
+        } catch (err) {
+          showSkillFeedback('解析失败: ' + (err.message || String(err)), 'error');
+          return;
+        }
+        var validation = SkillLoader.validateSkill(parseResult);
+        if (!validation.valid) {
+          showSkillFeedback((t('modal.skills_import_failed') || '导入失败') + ': ' + validation.errors.join('; '), 'error');
+          return;
+        }
+        GobyStorage.saveSkill(validation.skillManifest.domain, {
+          name: validation.skillManifest.name,
+          description: validation.skillManifest.description,
+          domain: validation.skillManifest.domain,
+          actions: validation.skillManifest.actions,
+          source: 'imported'
+        }).then(function () {
+          showSkillFeedback((t('modal.skills_import_success') || '已安装') + ': ' + validation.skillManifest.domain, 'success');
+          refreshSkillsList();
+          refreshRecommendedList();
+          importRow.style.display = 'none';
+          importInput.value = '';
+        }).catch(function (e) {
+          showSkillFeedback('保存失败: ' + (e.message || String(e)), 'error');
+        });
+      };
+      reader.readAsText(file);
     });
 
     // 确认导入
