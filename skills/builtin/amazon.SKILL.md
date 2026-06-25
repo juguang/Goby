@@ -5,7 +5,7 @@ domain: amazon.com
 ---
 
 ## amazon-search
-Description: Search Amazon for products by keyword. If already on a search results page, extract product listings directly. Supports both initiating a search and scraping results.
+Description: *** THIS IS THE PRIMARY TOOL for Amazon. Use FIRST before amazon-product. *** Search Amazon by keyword (fills search box + submits form, navigate to results). If already on a results page (no keyword given), extracts product listings directly.
 Input: { "keyword": { "type": "string", "description": "The search keyword to look up on Amazon. If omitted and on a results page, just extract." } }
 ```javascript
 function(params) {
@@ -64,7 +64,7 @@ function(params) {
 ```
 
 ## amazon-product
-Description: Extract detailed product info (title, price, rating, availability, features) from the current Amazon product page. Only use on individual product pages, not search results.
+Description: [Use ONLY after finding products with amazon-search] Extract title/price/rating/availability from a single Amazon product page (URL contains /dp/ or /gp/product/). Do NOT use on the homepage or search results.
 Input: {}
 ```javascript
 function() {
