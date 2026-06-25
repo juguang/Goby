@@ -3347,20 +3347,40 @@
           },
           timeout: 30000,
           execute: function (params) {
-            // 预编译函数直接执行（测试环境 / CSP 宽松页面）
+            // 导航检测——skill 可能触发表单提交导致页面跳转
+            var navigated = false;
+            var onNav = function () { navigated = true; };
+            window.addEventListener('beforeunload', onNav);
+            window.addEventListener('pagehide', onNav);
+
+            function formatResult(result, isError) {
+              window.removeEventListener('beforeunload', onNav);
+              window.removeEventListener('pagehide', onNav);
+              var text;
+              if (result && Array.isArray(result.content)) {
+                var texts = [];
+                for (var ci = 0; ci < result.content.length; ci++) {
+                  if (result.content[ci] && typeof result.content[ci].text === 'string') texts.push(result.content[ci].text);
+                }
+                text = texts.length === 1 ? texts[0] : JSON.stringify(texts.length > 0 ? texts : result);
+              } else if (typeof result === 'string') {
+                text = result;
+              } else {
+                text = JSON.stringify(result);
+              }
+              if (isError) text = 'Error: ' + actionName + ' 失败 - ' + (isError.message || isError);
+              if (navigated && text.indexOf('Error:') !== 0) {
+                text += ' (navigation started, agent loop will pause until new page loads)';
+              }
+              return text;
+            }
+
+            // 预编译函数直接执行
             if (hasPrecompiled) {
               try {
-                var r = action.execute(params);
-                if (r && Array.isArray(r.content)) {
-                  var texts = [];
-                  for (var ci = 0; ci < r.content.length; ci++) {
-                    if (r.content[ci] && typeof r.content[ci].text === 'string') texts.push(r.content[ci].text);
-                  }
-                  return texts.length === 1 ? texts[0] : JSON.stringify(texts.length > 0 ? texts : r);
-                }
-                return typeof r === 'string' ? r : JSON.stringify(r);
+                return formatResult(action.execute(params));
               } catch (e) {
-                return 'Error: ' + actionName + ' 失败 - ' + (e.message || e);
+                return formatResult(null, e);
               }
             }
             // rawCode 通过 page_evaluate SW 通道执行（绕过页面 CSP）
@@ -3373,26 +3393,13 @@
               '})())';
               chrome.runtime.sendMessage({ action: 'page-evaluate', expression: expr }, function (response) {
                 if (chrome.runtime.lastError) {
-                  resolve('Error: skill ' + actionName + ' 执行失败 - ' + chrome.runtime.lastError.message);
+                  resolve(formatResult(null, chrome.runtime.lastError));
                   return;
                 }
                 try {
-                  var result = JSON.parse(String(response));
-                  if (result && Array.isArray(result.content)) {
-                    var texts = [];
-                    for (var ci = 0; ci < result.content.length; ci++) {
-                      if (result.content[ci] && typeof result.content[ci].text === 'string') {
-                        texts.push(result.content[ci].text);
-                      }
-                    }
-                    resolve(texts.length === 1 ? texts[0] : JSON.stringify(texts.length > 0 ? texts : result));
-                  } else if (typeof result === 'string') {
-                    resolve(result);
-                  } else {
-                    resolve(JSON.stringify(result));
-                  }
+                  resolve(formatResult(JSON.parse(String(response))));
                 } catch (e) {
-                  resolve(String(response));
+                  resolve(formatResult(String(response)));
                 }
               });
             });
