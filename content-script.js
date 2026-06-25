@@ -4204,10 +4204,10 @@
   function _autoRegisterSkills() {
     var hostname = window.location.hostname;
     console.log('[skill] _autoRegisterSkills hostname:', hostname);
-    if (!hostname) return;
+    if (!hostname) return Promise.resolve();
 
     // 先尝试精确匹配
-    GobyStorage.getSkill(hostname).then(function (skill) {
+    return GobyStorage.getSkill(hostname).then(function (skill) {
       console.log('[skill] getSkill(' + hostname + '):', skill ? 'found' : 'not found');
       if (skill && Array.isArray(skill.actions) && skill.actions.length > 0) {
         return registerSkillTools(hostname);
