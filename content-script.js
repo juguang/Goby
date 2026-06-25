@@ -4074,6 +4074,8 @@
         // 优先检查：当前 session 自身的 interrupted 标记
         if (session.interrupted === true &&
             session.interruptedAt && Date.now() - session.interruptedAt < 60000) {
+          // 先注册技能工具再 resume（否则 agent 第一轮看不到 skill 工具）
+          _autoRegisterSkills();
           window.GobyAgent.processAgentMessage(null, { resume: true });
           return null;
         }
@@ -4089,6 +4091,7 @@
               var crossSession = gsSessions[lasEntries[lei].sessionId];
               if (crossSession && crossSession.navigatedByAgent === true &&
                   crossSession.interruptedAt && Date.now() - crossSession.interruptedAt < 60000) {
+                _autoRegisterSkills();
                 window.GobyAgent.processAgentMessage(null, { resume: true });
               }
               return null;
@@ -4170,6 +4173,7 @@
               }
             }
             if (!isWorkflowInterrupted) {
+              _autoRegisterSkills();
               window.GobyAgent.processAgentMessage(null, { resume: true });
             }
           }
