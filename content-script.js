@@ -3995,6 +3995,7 @@
     registerSkillTools: registerSkillTools,
     unregisterSkillTools: unregisterSkillTools,
     _autoRegisterSkills: _autoRegisterSkills,
+    _resetAutoRegister: function () { _autoRegisterCalled = false; },
     _domainMatchesSkill: _domainMatchesSkill,
     // Plan 09-03: 内置技能预装
     _preloadBuiltinSkills: _preloadBuiltinSkills,

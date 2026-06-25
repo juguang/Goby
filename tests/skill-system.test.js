@@ -1060,6 +1060,11 @@ describe('Skill Tool Registration (Plan 09-02)', function () {
   });
 
   describe('Auto-register on domain match (_autoRegisterSkills)', function () {
+    beforeEach(function () {
+      if (internals._resetAutoRegister) internals._resetAutoRegister();
+      internals._activeSkillTools.length = 0;
+    });
+
     it('should auto-register when skill exists for current hostname (localhost in jsdom)', function (done) {
       jest.useRealTimers();
       seedSkill('localhost');
