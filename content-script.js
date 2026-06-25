@@ -4207,7 +4207,12 @@
    * _autoRegisterSkills — 为当前 hostname 自动注册匹配的技能工具
    * 支持子域名通配：amazon.com 自动匹配 www.amazon.com
    */
+  var _autoRegisterCalled = false;
+
   function _autoRegisterSkills() {
+    if (_autoRegisterCalled) return Promise.resolve();
+    _autoRegisterCalled = true;
+
     var hostname = window.location.hostname;
     console.log('[skill] _autoRegisterSkills hostname:', hostname);
     if (!hostname) return Promise.resolve();
