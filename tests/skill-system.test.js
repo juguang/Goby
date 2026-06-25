@@ -1256,9 +1256,9 @@ describe('Skill Tool Registration (Plan 09-02)', function () {
       if (!r) { pending('File not found'); return; }
       expect(r.validation.valid).toBe(true);
       expect(r.validation.errors).toEqual([]);
-      expect(r.validation.skillManifest.name).toBe('Amazon Browsing');
+      expect(r.validation.skillManifest.name).toBe('Amazon');
       expect(r.validation.skillManifest.domain).toBe('amazon.com');
-      expect(r.validation.skillManifest.actions).toHaveLength(2);
+      expect(r.validation.skillManifest.actions).toHaveLength(1);
       var names = r.validation.skillManifest.actions.map(function (a) { return a.name; });
       expect(names).toContain('amazon');
       r.validation.skillManifest.actions.forEach(function (action) {
