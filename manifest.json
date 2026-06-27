@@ -1,7 +1,7 @@
 {
   "manifest_version": 3,
   "name": "Goby - AI 浏览器助手",
-  "version": "0.3.0",
+  "version": "0.3.1",
   "description": "通过自然语言对话操控网页的 AI 浏览器助手",
   "permissions": [
     "activeTab",

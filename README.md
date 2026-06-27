@@ -29,6 +29,7 @@
 | **A real tool-calling loop** | Streaming responses. Multi-step reasoning across chained tool calls. Up to 50 rounds per turn, 50 tools per session, 15 s per-tool timeout. Stop button to interrupt in-progress execution. |
 | **Cross-page autonomous navigation** | Agent can navigate to other pages, open new tabs, run tasks on them, and return results — all automatically. Worker tab progress streams back to the chat tab in real time. |
 | **No backend, ever** | Everything runs in your browser. Your API key and your conversations never touch a Goby-controlled server. |
+| **Movable, resizable** | Drag the floating ball anywhere on the screen. Resize the panel from any edge or corner. Positions and geometry persist across sessions. |
 | **Isolated by design** | Shadow DOM keeps the panel out of the page — and the page out of the panel. DOMPurify sanitizes every LLM payload; user input uses `textContent`, never `innerHTML`. |
 | **Read it in an afternoon** | ~5,500 lines of vanilla JS, no framework, no build step, no transpile. The whole runtime fits in your head. |
 
