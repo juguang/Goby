@@ -2,6 +2,28 @@
 
 ---
 
+## v0.3.3 — 2026-06-27
+
+### 🇺🇸 English
+
+**Bookmarks tools — let the LLM search the user's Chrome bookmarks.**
+
+- **3 new tools**: `bookmarks_search` (keyword match on title + URL, top 50 default, max 200), `bookmarks_list_tree` (folder tree, default root depth=1, max depth=3), `bookmarks_recent` (most recently added, default 20, max 100). All three go through the Service Worker — `chrome.bookmarks` is only available there.
+- **New `bookmarks` permission** in `manifest.json`. Chrome shows the user the standard "read your bookmarks" warning on install/upgrade; the API is read-only.
+- **Token-budget guards**: search returns a count, tree defaults to one level (depth=max 3), recent is capped at 100. A 500+ bookmark user no longer blows the context window on a single dump.
+
+---
+
+### 🇨🇳 中文
+
+**书签工具 —— 让 LLM 能检索用户的 Chrome 收藏夹。**
+
+- **新增 3 个工具**：`bookmarks_search`（按关键词匹配标题 + URL，默认前 50 条，最大 200）、`bookmarks_list_tree`（文件夹树，默认根目录 depth=1，最大 depth=3）、`bookmarks_recent`（最近添加，默认 20，最大 100）。3 个都走 Service Worker —— `chrome.bookmarks` 仅 SW 可用。
+- **manifest 新增 `bookmarks` 权限**。Chrome 会在安装/升级时显示标准的「读取您的书签」提示；API 只读。
+- **Token 预算防护**：search 报告总匹配数、tree 默认仅展开一层子节点（最大 3 层）、recent 上限 100。500+ 书签的用户单次 dump 不再撑爆上下文。
+
+---
+
 ## v0.3.2 — 2026-06-27
 
 ### 🇺🇸 English

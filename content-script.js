@@ -2252,6 +2252,84 @@
         });
       }
     },
+    // Bookmarks — 检索用户 Chrome 收藏夹。3 个工具均走 SW（chrome.bookmarks 仅 SW 可用）
+    {
+      type: 'function',
+      function: {
+        name: 'bookmarks_search',
+        description: 'Search user Chrome bookmarks by keyword. Matches bookmark title or URL. Returns up to `limit` (default 50, max 200) results. Use this when the user asks about pages they have bookmarked.',
+        parameters: {
+          type: 'object',
+          properties: {
+            query: { type: 'string', description: 'Search keyword (matched against bookmark title and URL).' },
+            limit: { type: 'number', description: 'Max number of results. Default 50, max 200.', default: 50 }
+          },
+          required: ['query']
+        }
+      },
+      timeout: 15000,
+      execute: function (args) {
+        return new Promise(function (resolve) {
+          sendToSW('bookmarks-search', {
+            action: 'bookmarks-search',
+            query: args && args.query,
+            limit: args && args.limit
+          }).then(function (response) {
+            resolve(String(response));
+          });
+        });
+      }
+    },
+    {
+      type: 'function',
+      function: {
+        name: 'bookmarks_list_tree',
+        description: 'List the user Chrome bookmark tree under a folder. Default: root folder (id="0") with one level of children. Use folderId="1" for the bookmarks bar, "2" for other bookmarks. depth controls recursion (default 1, max 3) — keep small to avoid huge dumps.',
+        parameters: {
+          type: 'object',
+          properties: {
+            folderId: { type: 'string', description: 'Folder id. "0"=root (default), "1"=bookmarks bar, "2"=other bookmarks, or any folder id from a previous call.', default: '0' },
+            depth: { type: 'number', description: 'Recursion depth. 1=only direct children (default), 2=two levels, max 3.', default: 1 }
+          }
+        }
+      },
+      timeout: 15000,
+      execute: function (args) {
+        return new Promise(function (resolve) {
+          sendToSW('bookmarks-tree', {
+            action: 'bookmarks-tree',
+            folderId: args && args.folderId,
+            depth: args && args.depth
+          }).then(function (response) {
+            resolve(String(response));
+          });
+        });
+      }
+    },
+    {
+      type: 'function',
+      function: {
+        name: 'bookmarks_recent',
+        description: 'List the user\'s most recently added Chrome bookmarks. Default 20, max 100. Sorted by dateAdded descending.',
+        parameters: {
+          type: 'object',
+          properties: {
+            count: { type: 'number', description: 'Number of recent bookmarks to return. Default 20, max 100.', default: 20 }
+          }
+        }
+      },
+      timeout: 15000,
+      execute: function (args) {
+        return new Promise(function (resolve) {
+          sendToSW('bookmarks-recent', {
+            action: 'bookmarks-recent',
+            count: args && args.count
+          }).then(function (response) {
+            resolve(String(response));
+          });
+        });
+      }
+    },
     // Phase 8 / NAV-08 / D-13: page_finish_workflow — 工作 Tab Agent 完成任务时调用
     // Pitfall 8 防御：description 明示只能在 worker tab 调用，避免 LLM 在 chat Tab 误调
     {

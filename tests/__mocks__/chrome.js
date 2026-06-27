@@ -97,5 +97,56 @@ global.chrome = {
   },
   scripting: {
     executeScript: jest.fn()
+  },
+  // Bookmarks — 260627-jbi 收藏夹工具测试用
+  // 调用 chrome._setBookmarks(nodes) / chrome._setBookmarkTree(tree) 写入测试夹具
+  bookmarks: {
+    search: jest.fn(function (query, cb) {
+      cb = cb || function () {};
+      var all = chromeMockData.__bookmarks || [];
+      var q = String(query || '').toLowerCase();
+      var matched = all.filter(function (b) {
+        var t = (b.title || '').toLowerCase();
+        var u = (b.url || '').toLowerCase();
+        return t.indexOf(q) !== -1 || u.indexOf(q) !== -1;
+      });
+      cb(matched);
+    }),
+    getTree: jest.fn(function (cb) {
+      cb = cb || function () {};
+      cb(chromeMockData.__bookmarkTree || []);
+    }),
+    getSubTree: jest.fn(function (id, cb) {
+      cb = cb || function () {};
+      var tree = chromeMockData.__bookmarkTree || [];
+      function find(nodes) {
+        for (var i = 0; i < nodes.length; i++) {
+          if (nodes[i].id === id) return [nodes[i]];
+          if (nodes[i].children) {
+            var r = find(nodes[i].children);
+            if (r) return r;
+          }
+        }
+        return null;
+      }
+      cb(find(tree) || []);
+    }),
+    getRecent: jest.fn(function (count, cb) {
+      cb = cb || function () {};
+      var all = chromeMockData.__bookmarks || [];
+      // 按 dateAdded 倒序（真实 chrome.bookmarks.getRecent 语义）
+      var sorted = all.slice().sort(function (a, b) {
+        return (b.dateAdded || 0) - (a.dateAdded || 0);
+      });
+      cb(sorted.slice(0, count));
+    })
   }
+};
+
+// Bookmarks test helpers
+chrome._setBookmarks = function (nodes) {
+  chromeMockData.__bookmarks = nodes || [];
+};
+chrome._setBookmarkTree = function (tree) {
+  chromeMockData.__bookmarkTree = tree || [];
 };

@@ -902,6 +902,87 @@
     }
 
     // ============================================================
+    //  Bookmarks — chrome.bookmarks API
+    //  3 个 handler：search / tree / recent
+    //  Token 控制：search 默认 50 条、tree 默认 depth=1、recent 默认 20 条
+    // ============================================================
+
+    // bookmarks-search: 按 query 在 title/url 中匹配（chrome.bookmarks.search 是子串匹配）
+    if (message.action === 'bookmarks-search') {
+      var bsQuery = String(message.query || '');
+      var bsLimit = Math.min(Math.max(parseInt(message.limit, 10) || 50, 1), 200);
+      if (!bsQuery) {
+        sendResponse('Error: query 不能为空');
+        return false;
+      }
+      chrome.bookmarks.search(bsQuery, function (results) {
+        if (chrome.runtime.lastError) {
+          sendResponse('Error: ' + chrome.runtime.lastError.message);
+          return;
+        }
+        var total = results.length;
+        var sliced = results.slice(0, bsLimit);
+        var lines = sliced.map(function (b, i) {
+          return (i + 1) + '. ' + (b.title || '(无标题)') + '\n   ' + (b.url || '(文件夹)') + '\n   id=' + b.id + ' dateAdded=' + (b.dateAdded || '?');
+        });
+        sendResponse('搜索 "' + bsQuery + '" 匹配 ' + total + ' 条（显示前 ' + sliced.length + ' 条）:\n\n' + lines.join('\n\n'));
+      });
+      return true; // 异步响应
+    }
+
+    // bookmarks-tree: 列出指定文件夹下的子节点（默认根节点 depth=1）
+    //   folderId="0" 根 → getTree；其他 → getSubTree
+    //   depth 控制递归层数（1=仅一层子节点，最大 3）
+    if (message.action === 'bookmarks-tree') {
+      var btFolderId = String(message.folderId || '0');
+      var btDepth = Math.min(Math.max(parseInt(message.depth, 10) || 1, 1), 3);
+      var fetcher = btFolderId === '0' ? chrome.bookmarks.getTree : chrome.bookmarks.getSubTree.bind(null, btFolderId);
+      fetcher(function (nodes) {
+        if (chrome.runtime.lastError) {
+          sendResponse('Error: ' + chrome.runtime.lastError.message);
+          return;
+        }
+        var lines = [];
+        function walk(node, depth, maxDepth) {
+          if (!node) return;
+          var indent = '  '.repeat(depth);
+          var label = node.title || (depth === 0 ? '(根)' : '(未命名)');
+          if (node.url) {
+            lines.push(indent + '- 📑 ' + label + ' — ' + node.url + ' [id=' + node.id + ']');
+          } else {
+            lines.push(indent + '- 📁 ' + label + ' [id=' + node.id + ']');
+          }
+          if (depth < maxDepth && node.children) {
+            node.children.forEach(function (c) { walk(c, depth + 1, maxDepth); });
+          }
+        }
+        // getTree/getSubTree 返回数组（根节点列表）
+        (nodes || []).forEach(function (root) { walk(root, 0, btDepth); });
+        sendResponse('书签树（folderId=' + btFolderId + ', depth=' + btDepth + '）:\n\n' + lines.join('\n'));
+      });
+      return true; // 异步响应
+    }
+
+    // bookmarks-recent: 最近添加的 N 条书签（默认 20，最大 100）
+    if (message.action === 'bookmarks-recent') {
+      var brCount = Math.min(Math.max(parseInt(message.count, 10) || 20, 1), 100);
+      chrome.bookmarks.getRecent(brCount, function (results) {
+        if (chrome.runtime.lastError) {
+          sendResponse('Error: ' + chrome.runtime.lastError.message);
+          return;
+        }
+        // chrome.bookmarks.getRecent 不保证按时间排序，手动按 dateAdded 倒序
+        results.sort(function (a, b) { return (b.dateAdded || 0) - (a.dateAdded || 0); });
+        var lines = results.map(function (b, i) {
+          var ts = b.dateAdded ? new Date(b.dateAdded).toISOString().slice(0, 19) : '?';
+          return (i + 1) + '. [' + ts + '] ' + (b.title || '(无标题)') + '\n   ' + (b.url || '(文件夹)') + '\n   id=' + b.id;
+        });
+        sendResponse('最近 ' + results.length + ' 条书签:\n\n' + lines.join('\n\n'));
+      });
+      return true; // 异步响应
+    }
+
+    // ============================================================
     //  Phase 8 / NAV-07 / NAV-08: 跨 Tab 工作流消息中继
     //  D-08: 三种消息类型 workflow_progress / workflow_complete / workflow_error
     //        由工作 Tab Agent 经 SW 转发回 chat Tab
