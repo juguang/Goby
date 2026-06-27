@@ -948,6 +948,96 @@ describe('Skill Tool Registration (Plan 09-02)', function () {
       });
     });
 
+    it('should compile rawCode via MAIN world script injection when execute is missing (storage-loaded skills)', function () {
+      // 模拟生产环境：从 storage 加载的 skill 只有 rawCode（execute 因 JSON 序列化丢失）
+      // 验证通过 <script> 标签注入 MAIN world 异步执行 rawCode
+      seedSkill('rawcode-only.com', [
+        {
+          name: 'compiled_action',
+          description: 'Action loaded from storage without execute',
+          inputSchema: {},
+          rawCode: 'function(params) { return { content: [{ type: "text", text: "compiled: " + (params.x || "none") }] }; }'
+          // 注意：没有 execute 字段
+        }
+      ]);
+
+      return internals.registerSkillTools('rawcode-only.com').then(function (count) {
+        expect(count).toBe(1);
+        var tool = internals._activeSkillTools[0];
+        expect(typeof tool.execute).toBe('function');
+        return tool.execute({ x: 'abc' });
+      }).then(function (result) {
+        expect(result).toBe('compiled: abc');
+      });
+    });
+
+    it('should skip actions with invalid rawCode (syntax error)', function () {
+      seedSkill('syntax-error.com', [
+        {
+          name: 'broken_action',
+          description: 'Has syntax error',
+          inputSchema: {},
+          rawCode: 'function(params) { {' // 花括号不匹配，new Function 会抛错
+        },
+        {
+          name: 'valid_action',
+          description: 'Valid action',
+          inputSchema: {},
+          rawCode: 'function(params) { return { content: [{ type: "text", text: "ok" }] }; }'
+        }
+      ]);
+
+      return internals.registerSkillTools('syntax-error.com').then(function (count) {
+        // broken_action 应该被跳过，valid_action 应该被注册
+        expect(count).toBe(1);
+        expect(internals._activeSkillTools[0].function.name).toBe('valid_action');
+      });
+    });
+
+    it('should execute rawCode via new Function and return text from content array', function () {
+      // 模拟实际生产场景：从 storage 加载，技能只含 rawCode
+      // 在 content script ISOLATED world 用 new Function 编译执行
+      seedSkill('hn-execute.com', [
+        {
+          name: 'hackernews_frontpage',
+          description: 'Extract HN front page stories',
+          inputSchema: { limit: { type: 'number' } },
+          rawCode: 'function(params) { var limit = params.limit || 3; return { content: [{ type: "text", text: "showing " + limit + " stories" }] }; }'
+        }
+      ]);
+
+      return internals.registerSkillTools('hn-execute.com').then(function (count) {
+        expect(count).toBe(1);
+        var tool = internals._activeSkillTools[0];
+        return tool.execute({ limit: 5 });
+      }).then(function (result) {
+        expect(result).toBe('showing 5 stories');
+      });
+    });
+
+    it('should propagate skill execution errors without Error: prefix (avoid retry loop)', function () {
+      // 注意：故意不带 "Error:" 前缀——executeWithTimeout 看到该前缀会重试 3 次，
+      // 然后标记"已跳过"，LLM 看不到真正的错误信息。改用中性前缀让 LLM 直接看到失败。
+      seedSkill('throwing-skill.com', [
+        {
+          name: 'throws_action',
+          description: 'Throws at runtime',
+          inputSchema: {},
+          rawCode: 'function(params) { throw new Error("boom"); }'
+        }
+      ]);
+
+      return internals.registerSkillTools('throwing-skill.com').then(function (count) {
+        expect(count).toBe(1);
+        var tool = internals._activeSkillTools[0];
+        return tool.execute({});
+      }).then(function (result) {
+        expect(result).toContain('throws_action');
+        expect(result).toContain('boom');
+        expect(result.indexOf('Error:')).toBe(-1);
+      });
+    });
+
     it('should handle direct string returns from execute', function () {
       seedSkill('string-result.com', [
         {
@@ -968,7 +1058,8 @@ describe('Skill Tool Registration (Plan 09-02)', function () {
       });
     });
 
-    it('should catch execute errors and return Error: prefix', function () {
+    it('should catch execute errors and return non-Error prefix (avoid retry loop)', function () {
+      // 错误信息不带 "Error:" 前缀——避免 executeWithTimeout 误判重试
       seedSkill('error-test.com', [
         {
           name: 'crash_action',
@@ -985,7 +1076,9 @@ describe('Skill Tool Registration (Plan 09-02)', function () {
         var tool = internals._activeSkillTools[0];
         var result = tool.execute({});
         expect(typeof result).toBe('string');
-        expect(result.indexOf('Error: crash_action 失败')).toBe(0);
+        expect(result).toContain('crash_action');
+        expect(result).toContain('something went wrong');
+        expect(result.indexOf('Error:')).toBe(-1);
       });
     });
 
@@ -1170,7 +1263,8 @@ describe('Skill Tool Registration (Plan 09-02)', function () {
   });
 
   describe('Error handling', function () {
-    it('should return Error: string when execute throws synchronously', function () {
+    it('should return non-Error-prefixed failure message when execute throws synchronously', function () {
+      // 不带 "Error:" 前缀——避免 executeWithTimeout 误判重试 3 次
       seedSkill('throw-test.com', [
         {
           name: 'thrower',
@@ -1185,7 +1279,9 @@ describe('Skill Tool Registration (Plan 09-02)', function () {
       return internals.registerSkillTools('throw-test.com').then(function (count) {
         expect(count).toBe(1);
         var result = internals._activeSkillTools[0].execute({});
-        expect(result).toMatch(/^Error: thrower 失败/);
+        expect(result).toMatch(/thrower/);
+        expect(result).toContain('intentional crash');
+        expect(result.indexOf('Error:')).toBe(-1);
       });
     });
 

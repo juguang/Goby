@@ -985,6 +985,13 @@ describe('navigation resume', function () {
     internal.activeOrigin = origin;
     internal.messages.push({ role: 'user', content: '搜索' });
 
+    // 在 page 上放一个会触发 navigation 的 anchor
+    document.body.innerHTML = '<a id="navlink" href="/other">Go</a>';
+    // 模拟 click 触发 beforeunload（page_click 的 navigation 检测依赖此事件）
+    // 不能真触发 navigation（jsdom 限制），改为直接监听后 mock beforeunload
+    var onBeforeUnload = function () { /* 触发 nav 检测 */ };
+    window.addEventListener('beforeunload', onBeforeUnload);
+
     var llmCalls = 0;
     chrome.runtime.sendMessage.mockImplementation(function (msg, callback) {
       if (msg && msg.action === 'llm-stream') {
@@ -998,8 +1005,8 @@ describe('navigation resume', function () {
               content: '',
               tool_calls: {
                 '0': {
-                  id: 'call_pe_1', type: 'function',
-                  function: { name: 'page_evaluate', arguments: { expression: 'test' } }
+                  id: 'call_pc_1', type: 'function',
+                  function: { name: 'page_click', arguments: { selector: '#navlink' } }
                 }
               }
             }
@@ -1007,17 +1014,27 @@ describe('navigation resume', function () {
         });
         return Promise.resolve();
       }
-      if (msg && msg.action === 'page-evaluate') {
-        // 模拟 navigation started 返回值
-        if (callback) callback('Clicked: #btn (navigation started, agent loop will pause until new page loads)');
-        return undefined;
-      }
       if (callback) callback(undefined);
       return Promise.resolve({});
     });
 
-    await window.GobyAgent.processAgentMessage('search', {});
-    await flushMicrotasks();
+    // 在 page_click 真正执行前 hijack beforeunload 事件触发，让 navigated=true
+    // 通过 monkey-patch addEventListener 在 page_click 注册 listener 后立即 dispatch
+    var origClick = HTMLElement.prototype.click;
+    HTMLElement.prototype.click = function () {
+      // dispatch beforeunload event 让 page_click 的 navigated 标志变 true
+      var evt;
+      try { evt = new BeforeUnloadEvent('beforeunload'); } catch (e) { evt = new Event('beforeunload'); }
+      window.dispatchEvent(evt);
+    };
+
+    try {
+      await window.GobyAgent.processAgentMessage('search', {});
+      await flushMicrotasks();
+    } finally {
+      HTMLElement.prototype.click = origClick;
+      window.removeEventListener('beforeunload', onBeforeUnload);
+    }
 
     // Fix BR-2: navigation started 后立即 break，只调 1 次 LLM
     expect(llmCalls).toBe(1);

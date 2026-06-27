@@ -492,6 +492,9 @@ describe('page_evaluate', function () {
     });
   }
 
+  // 模拟 SW page-evaluate 通道：SW 用 chrome.scripting.executeScript 在 MAIN world
+  // 执行 eval(expression)。测试中直接 mock chrome.runtime.sendMessage，
+  // 模拟 SW 行为：执行 expression 并返回字符串结果。
   beforeEach(function () {
     jest.resetModules();
     jest.clearAllMocks();
@@ -501,10 +504,8 @@ describe('page_evaluate', function () {
     });
     document.body.innerHTML = '<div class="btn">Hello</div>';
 
-    // Mock chrome.runtime.sendMessage to simulate Service Worker response
     chrome.runtime.sendMessage.mockImplementation(function (msg, callback) {
       if (msg && msg.action === 'page-evaluate') {
-        // Simulate eval in background.js
         var result;
         try {
           result = eval(msg.expression);
@@ -512,13 +513,11 @@ describe('page_evaluate', function () {
           result = 'Error: ' + e.message;
         }
         if (typeof callback === 'function') {
-          callback(String(result));
+          callback(String(result !== undefined ? result : ''));
         }
         return undefined;
       }
-      if (typeof callback === 'function') {
-        callback(null);
-      }
+      if (typeof callback === 'function') callback(null);
       return undefined;
     });
   });
@@ -577,22 +576,16 @@ describe('page_evaluate', function () {
   });
 
   // ---------------------------------------------------------------
-  //  sendMessage error handling
+  //  ISOLATED world execution error handling
   // ---------------------------------------------------------------
-  test('returns error when sendMessage fails', function () {
-    chrome.runtime.sendMessage.mockImplementation(function () {
-      if (typeof arguments[arguments.length - 1] === 'function') {
-        // Simulate chrome.runtime.lastError
-        chrome.runtime.lastError = { message: 'Connection failed' };
-        arguments[arguments.length - 1]();
-        chrome.runtime.lastError = null;
-      }
-      return undefined;
-    });
+  test('returns non-Error-prefixed failure message when expression throws (avoid retry loop)', function () {
+    // 失败时不带 "Error:" 前缀——避免 executeWithTimeout 误判重试 3 次
+    // 让 LLM 看到失败信息后换工具
     loadQueryModules();
     var tool = getTool('page_evaluate');
-    return tool.execute({ expression: '42' }).then(function (result) {
-      expect(result).toMatch(/^Error: page_evaluate failed/);
+    return tool.execute({ expression: 'undefinedProperty.nonExistent' }).then(function (result) {
+      expect(result).toMatch(/^page_evaluate 执行失败/);
+      expect(result).not.toMatch(/^Error:/);
     });
   });
 });
