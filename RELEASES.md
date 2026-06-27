@@ -2,6 +2,34 @@
 
 ---
 
+## v0.3.2 — 2026-06-27
+
+### 🇺🇸 English
+
+**CSP-resilient tooling — page_evaluate and uploaded skills now work on strict-CSP sites (HN, GitHub, Twitter, etc.).**
+
+- **`page_evaluate` runs in the page's MAIN world via Service Worker** — uses `chrome.scripting.executeScript({world:'MAIN'})`, which is a Chrome extension privilege and bypasses page CSP entirely. v0.3.1 used ISOLATED-world `eval()`, which strict CSPs reject.
+- **Uploaded skills compile via `new Function` in ISOLATED world** — rawCode is passed as a string (not a Function object) so structured clone doesn't strip it. On strict-CSP sites where `new Function` fails, the new SYSTEM_PROMPT rule (below) tells the LLM to fall back to built-in tools.
+- **SYSTEM_PROMPT rule #6 — "switch paths on tool failure"** — when a tool returns `CSP` / `执行失败` / `timeout`, the LLM immediately switches to built-in DOM tools (`page_query` / `page_list_elements` / `page_click` / `page_fill`) instead of retrying the same call 3 times.
+- **Better `page_evaluate` result serialization** — DOM elements → `outerHTML` (truncated to 2000 chars); objects → `JSON.stringify`. Previously returned useless `[object HTMLDivElement]`.
+- **Imported skills take effect immediately** — no page refresh needed.
+- **`page_query` description nudges LLM toward `index=-1` batch queries** — saves tool calls and tokens when extracting lists (e.g. HN front page titles).
+
+---
+
+### 🇨🇳 中文
+
+**工具链 CSP 兼容性修复 —— page_evaluate 和用户上传技能在严格 CSP 站点（HN、GitHub、Twitter 等）上可用了。**
+
+- **`page_evaluate` 改走 Service Worker 在页面 MAIN world 执行** — 使用 `chrome.scripting.executeScript({world:'MAIN'})`，是 Chrome 扩展特权，绕过页面 CSP。v0.3.1 用的是 ISOLATED world `eval()`，会被严格 CSP 拒绝。
+- **用户上传技能改用 ISOLATED world 的 `new Function` 编译** — rawCode 以字符串传递（不会被结构化克隆剥离）。严格 CSP 站点上 `new Function` 仍会失败，但配合下面的 SYSTEM_PROMPT 规则，LLM 会自动 fallback 到内置工具。
+- **SYSTEM_PROMPT 新增第 6 条「工具失败立即换路径」** — 工具返回 `CSP` / `执行失败` / `timeout` 时，LLM 立即改用内置 DOM 工具（`page_query` / `page_list_elements` / `page_click` / `page_fill`），不再重试 3 次浪费时间。
+- **`page_evaluate` 返回值序列化改进** — DOM 元素 → `outerHTML`（截断 2000 字符）；对象 → `JSON.stringify`。原版返回无意义的 `[object HTMLDivElement]`。
+- **导入技能即时生效** — 不再需要刷新页面。
+- **`page_query` 工具描述引导使用 `index=-1` 批量查询** — 提取列表（如 HN 首页标题）时省工具调用、省 token。
+
+---
+
 ## v0.3.1 — 2026-06-27
 
 ### 🇺🇸 English
