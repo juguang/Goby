@@ -1224,9 +1224,11 @@
             }).then(function (response) {
               var isOk = response && response.ok;
               var toolCount = (response && Array.isArray(response.tools)) ? response.tools.length : 0;
+              var errMsg = (!isOk && response && response.error) ? response.error : '';
               _mcpServerStatuses[id] = {
                 status: isOk ? 'connected' : 'failed',
-                toolCount: toolCount
+                toolCount: toolCount,
+                error: errMsg
               };
               // 如果面板还在 DOM 中，刷新状态显示
               if (document.querySelector('.goby-modal')) {
@@ -1239,10 +1241,11 @@
         for (var i = 0; i < serverIds.length; i++) {
           var id = serverIds[i];
           var server = servers[id];
-          // 从状态缓存附加连接状态和工具数
+          // 从状态缓存附加连接状态、工具数和错误信息
           if (_mcpServerStatuses[id]) {
             server._connectionStatus = _mcpServerStatuses[id].status;
             server._toolCount = _mcpServerStatuses[id].toolCount;
+            server._error = _mcpServerStatuses[id].error;
           } else {
             server._connectionStatus = 'untested';
           }
@@ -1316,6 +1319,14 @@
         var toolCount = document.createElement('span');
         toolCount.textContent = t('modal.mcp_tool_count', { n: server._toolCount });
         meta.appendChild(toolCount);
+      }
+
+      // 连接失败时显示错误详情
+      if (server._connectionStatus === 'failed' && server._error) {
+        var errRow = document.createElement('div');
+        errRow.style.cssText = 'font-size:11px;color:#dc2626;margin-top:2px;word-break:break-all;';
+        errRow.textContent = server._error;
+        card.appendChild(errRow);
       }
 
       // Actions 组
@@ -1593,11 +1604,13 @@
             }).then(function (response) {
               var isOk = response && response.ok;
               var toolCount = (response && Array.isArray(response.tools)) ? response.tools.length : 0;
+              var errMsg = (!isOk && response && response.error) ? response.error : '';
 
               // 更新状态缓存
               _mcpServerStatuses[serverId] = {
                 status: isOk ? 'connected' : 'failed',
-                toolCount: toolCount
+                toolCount: toolCount,
+                error: errMsg
               };
 
               // 移除表单
