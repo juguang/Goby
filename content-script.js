@@ -2262,7 +2262,7 @@
           var atBottom = newScrollY >= maxScroll;
           return '已滚动' + (dir === 'up' ? '上' : '下') + ' ' + Math.abs(pixels) + 'px\n位置: scrollY=' + newScrollY + '/' + maxScroll + '\n' +
             (atTop ? '[已到顶]' : '') + (atBottom ? '[已到底]' : '') +
-            (atBottom && !atTop ? '\n如需继续滚动或提取内容，请用 page_query / page_query / page_screenshot 等工具' : '');
+            (atBottom && !atTop ? '\n如需继续滚动或提取内容，请用 page_query / page_list_elements / page_screenshot 等' : '');
         } catch (e) {
           return 'Error: 滚动失败 - ' + (e.message || '未知错误');
         }
