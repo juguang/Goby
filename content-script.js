@@ -3697,7 +3697,8 @@
       preview: preview,
       messages: msgs,
       interrupted: isProcessing,
-      interruptedAt: isProcessing ? Date.now() : null
+      interruptedAt: isProcessing ? Date.now() : null,
+      navigatedByAgent: _agentState.navigatedByAgent === true
     };
 
     // 委托 SW 保存（SW 寿命长于 page，navigation 后仍能完成 storage.set）
