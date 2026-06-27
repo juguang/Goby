@@ -325,6 +325,84 @@
           return true;
         });
       });
+    },
+
+    // ---- MCP Server 配置管理 (Plan 10-01) ----
+
+    /**
+     * 保存/更新一个 MCP server 配置
+     * 数据存储于 chrome.storage.local 的 gobyMcpServers 键下
+     * @param {string} id - server 唯一标识（调用方生成）
+     * @param {{id: string, name: string, endpoint: string, token: string, enabled: boolean}} serverConfig
+     * @returns {Promise<void>}
+     */
+    saveMcpServer: function (id, serverConfig) {
+      return chrome.storage.local.get(['gobyMcpServers']).then(function (result) {
+        var servers = result.gobyMcpServers || {};
+        servers[id] = {
+          id: id,
+          name: serverConfig.name || '',
+          endpoint: serverConfig.endpoint || '',
+          token: serverConfig.token || '',
+          enabled: serverConfig.enabled !== undefined ? serverConfig.enabled : true
+        };
+        return chrome.storage.local.set({ gobyMcpServers: servers });
+      });
+    },
+
+    /**
+     * 按 id 获取单个 MCP server 配置
+     * @param {string} id
+     * @returns {Promise<object|null>}
+     */
+    getMcpServer: function (id) {
+      return chrome.storage.local.get(['gobyMcpServers']).then(function (result) {
+        var servers = result.gobyMcpServers || {};
+        return servers[id] || null;
+      });
+    },
+
+    /**
+     * 获取所有 MCP server 配置
+     * @returns {Promise<object>} { id: serverConfig, ... }
+     */
+    getAllMcpServers: function () {
+      return chrome.storage.local.get(['gobyMcpServers']).then(function (result) {
+        return result.gobyMcpServers || {};
+      });
+    },
+
+    /**
+     * 按 id 删除 MCP server 配置
+     * @param {string} id
+     * @returns {Promise<boolean>} true 如果删除成功，false 如果 id 不存在
+     */
+    deleteMcpServer: function (id) {
+      return chrome.storage.local.get(['gobyMcpServers']).then(function (result) {
+        var servers = result.gobyMcpServers || {};
+        if (!servers[id]) return false;
+        delete servers[id];
+        return chrome.storage.local.set({ gobyMcpServers: servers }).then(function () {
+          return true;
+        });
+      });
+    },
+
+    /**
+     * 切换 MCP server 的 enabled 状态
+     * @param {string} id
+     * @param {boolean} enabled
+     * @returns {Promise<boolean>} true 如果更新成功，false 如果 id 不存在
+     */
+    toggleMcpServer: function (id, enabled) {
+      return chrome.storage.local.get(['gobyMcpServers']).then(function (result) {
+        var servers = result.gobyMcpServers || {};
+        if (!servers[id]) return false;
+        servers[id].enabled = enabled;
+        return chrome.storage.local.set({ gobyMcpServers: servers }).then(function () {
+          return true;
+        });
+      });
     }
   };
 
