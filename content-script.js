@@ -2399,6 +2399,87 @@
     {
       type: 'function',
       function: {
+        name: 'page_click_by_index',
+        description: '点击交互元素 — 按 page_list_elements 返回的 index。工作流：先 page_list_elements({type}) 拿到带 index 的列表，再用相同 type 调 page_click_by_index({index, type})。element_type 必须与 list 时一致，否则 index 对不上。相比 page_click 省去反推 CSS 选择器，对动态 class/AI 生成页面更可靠。',
+        parameters: {
+          type: 'object',
+          properties: {
+            index: { type: 'number', description: '元素索引，对应 page_list_elements 输出的 index 字段' },
+            element_type: { type: 'string', description: '元素类型: all/inputs/buttons/links/selects/checkboxes/radios（必须与之前 list 时一致）', default: 'all' }
+          },
+          required: ['index']
+        }
+      },
+      timeout: 15000,
+      execute: async function (args) {
+        try {
+          var idx = args.index;
+          var type = args.element_type || 'all';
+
+          // ⚠️ 元素收集逻辑必须与 page_list_elements 完全一致 — 否则 index 漂移
+          var selectors = [];
+          if (type === 'all' || type === 'inputs') {
+            selectors.push('input', 'textarea', 'select');
+          }
+          if (type === 'all' || type === 'buttons') {
+            selectors.push('button', 'input[type="button"]', 'input[type="submit"]', 'input[type="reset"]');
+          }
+          if (type === 'all' || type === 'links') selectors.push('a[href]');
+          if (type === 'all' || type === 'selects') selectors.push('select');
+          if (type === 'all' || type === 'checkboxes') selectors.push('input[type="checkbox"]');
+          if (type === 'all' || type === 'radios') selectors.push('input[type="radio"]');
+
+          var elementSet = [];
+          for (var s = 0; s < selectors.length; s++) {
+            var nodes = document.querySelectorAll(selectors[s]);
+            for (var n = 0; n < nodes.length; n++) {
+              if (elementSet.indexOf(nodes[n]) === -1) {
+                elementSet.push(nodes[n]);
+              }
+            }
+          }
+
+          if (elementSet.length === 0) {
+            return 'No interactive elements found of type: ' + type;
+          }
+          if (idx < 0 || idx >= elementSet.length) {
+            return 'Index ' + idx + ' out of range. Found ' + elementSet.length + ' ' + type + ' elements.';
+          }
+
+          var el = elementSet[idx];
+          // 元素描述（方便 LLM 确认点对了）
+          var desc = el.tagName.toLowerCase() + (el.type ? '[' + el.type + ']' : '');
+          var elText = (el.innerText || el.textContent || '').trim();
+          if (elText) desc += ' "' + elText.slice(0, 40) + '"';
+
+          // navigation 检测（与 page_click 一致）
+          var navigated = false;
+          var onNav = function () { navigated = true; };
+          window.addEventListener('beforeunload', onNav);
+          window.addEventListener('pagehide', onNav);
+
+          el.scrollIntoView({ block: 'center' });
+          el.click();
+          el.dispatchEvent(new MouseEvent('mousedown', { bubbles: true }));
+          el.dispatchEvent(new MouseEvent('mouseup', { bubbles: true }));
+
+          await new Promise(function (resolve) { setTimeout(resolve, 200); });
+
+          window.removeEventListener('beforeunload', onNav);
+          window.removeEventListener('pagehide', onNav);
+
+          if (navigated || document.readyState === 'loading') {
+            return 'Clicked [' + idx + '] ' + desc + ' (navigation started, agent loop will pause until new page loads)';
+          }
+          return 'Clicked [' + idx + '] ' + desc;
+        } catch (e) {
+          return 'Click by index failed: ' + e.message;
+        }
+      }
+    },
+    {
+      type: 'function',
+      function: {
         name: 'page_check',
         description: '勾选或取消复选框',
         parameters: {
