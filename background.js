@@ -1200,6 +1200,119 @@
       return true; // 异步响应
     }
 
+    // ============================================================
+    //  Plan 10-01: MCP Server — Streamable HTTP Transport
+    // ============================================================
+
+    // mcp-list-tools: CS → SW 从 MCP server 拉取工具列表（D-04）
+    // 消息格式: { action: 'mcp-list-tools', serverId, endpoint, token }
+    if (message.action === 'mcp-list-tools') {
+      // McpHttpClient 必须已通过 lib/mcp-client.js 注册到 globalThis
+      if (typeof self.McpHttpClient !== 'function') {
+        sendResponse({ ok: false, error: 'McpHttpClient 未加载' });
+        return false;
+      }
+
+      var mlServerId = message.serverId;
+      var mlEndpoint = message.endpoint;
+      var mlToken = message.token;
+
+      if (!mlEndpoint) {
+        sendResponse({ ok: false, error: '缺少 endpoint 参数' });
+        return false;
+      }
+
+      var mlClient = new self.McpHttpClient(mlEndpoint, {
+        token: mlToken || '',
+        timeout: 15000
+      });
+
+      // T-10-04: 请求超时由 McpHttpClient._send 的 AbortController 处理
+      mlClient.initialize().then(function (initRes) {
+        if (initRes && initRes.error) {
+          sendResponse({ ok: false, error: '初始化失败: ' + (initRes.error.message || String(initRes.error)) });
+          return;
+        }
+        return mlClient.listTools().then(function (toolsRes) {
+          if (toolsRes && toolsRes.error) {
+            sendResponse({ ok: false, error: 'listTools 失败: ' + (toolsRes.error.message || String(toolsRes.error)) });
+            return;
+          }
+          sendResponse({
+            ok: true,
+            tools: (toolsRes.result && toolsRes.result.tools) || [],
+            serverInfo: (initRes.result && initRes.result.serverInfo) || null,
+            serverId: mlServerId
+          });
+        });
+      }).catch(function (err) {
+        sendResponse({ ok: false, error: 'MCP 连接失败: ' + (err.message || String(err)) });
+      });
+      return true; // 异步响应
+    }
+
+    // mcp-call-tool: CS → SW 调用 MCP server 的指定工具（D-09）
+    // 消息格式: { action: 'mcp-call-tool', serverId, endpoint, token, toolName, args }
+    if (message.action === 'mcp-call-tool') {
+      if (typeof self.McpHttpClient !== 'function') {
+        sendResponse({ ok: false, error: 'McpHttpClient 未加载' });
+        return false;
+      }
+
+      var mcEndpoint = message.endpoint;
+      var mcToken = message.token;
+      var mcToolName = message.toolName;
+      var mcArgs = message.args || {};
+
+      if (!mcEndpoint) {
+        sendResponse({ ok: false, error: '缺少 endpoint 参数' });
+        return false;
+      }
+      if (!mcToolName) {
+        sendResponse({ ok: false, error: '缺少 toolName 参数' });
+        return false;
+      }
+
+      var mcClient = new self.McpHttpClient(mcEndpoint, {
+        token: mcToken || '',
+        timeout: 15000
+      });
+
+      // T-10-04: 请求超时由 McpHttpClient._send 的 AbortController 处理
+      mcClient.initialize().then(function (initRes) {
+        if (initRes && initRes.error) {
+          sendResponse({ ok: false, error: '初始化失败: ' + (initRes.error.message || String(initRes.error)) });
+          return;
+        }
+        return mcClient.callTool(mcToolName, mcArgs).then(function (toolRes) {
+          if (toolRes && toolRes.error) {
+            sendResponse({ ok: false, error: 'MCP 工具调用失败: ' + (toolRes.error.message || String(toolRes.error)) });
+            return;
+          }
+          // 提取 content 文本
+          var resultContent = '';
+          if (toolRes.result && Array.isArray(toolRes.result.content) && toolRes.result.content.length > 0) {
+            var firstBlock = toolRes.result.content[0];
+            if (firstBlock.text) {
+              resultContent = firstBlock.text;
+            } else {
+              resultContent = JSON.stringify(toolRes.result);
+            }
+          } else if (toolRes.result) {
+            resultContent = JSON.stringify(toolRes.result);
+          }
+          sendResponse({
+            ok: true,
+            result: resultContent,
+            serverId: message.serverId
+          });
+        });
+      }).catch(function (err) {
+        sendResponse({ ok: false, error: 'MCP 工具调用失败: ' + (err.message || String(err)) });
+      });
+      return true; // 异步响应
+    }
+
     return false;
   });
 
