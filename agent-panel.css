@@ -642,3 +642,140 @@
   color: #9ca3af;
   cursor: default;
 }
+
+/* ---- MCP Servers Section (Plan 10-03) ---- */
+
+.goby-mcp-section {
+  margin-top: 24px;
+  border-top: 1px solid #e5e7eb;
+  padding-top: 16px;
+}
+
+.goby-mcp-section-title {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  margin-bottom: 12px;
+}
+
+.goby-mcp-section-title span {
+  font-size: 13px;
+  font-weight: 600;
+  color: #111827;
+}
+
+.goby-mcp-add-btn {
+  height: 28px;
+  padding: 0 8px;
+  font-size: 12px;
+  background: #667eea;
+  color: white;
+  border: none;
+  border-radius: 4px;
+  cursor: pointer;
+}
+
+.goby-mcp-add-btn:hover {
+  opacity: 0.85;
+}
+
+.goby-mcp-list {
+  display: flex;
+  flex-direction: column;
+  gap: 8px;
+}
+
+.goby-mcp-server-card {
+  border: 1px solid #e5e7eb;
+  border-radius: 4px;
+  padding: 8px 12px;
+  background: #f9fafb;
+}
+
+.goby-mcp-server-header {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+}
+
+.goby-mcp-server-name {
+  font-size: 13px;
+  font-weight: 500;
+  color: #111827;
+}
+
+.goby-mcp-server-meta {
+  font-size: 11px;
+  color: #6b7280;
+  margin-top: 4px;
+}
+
+.goby-mcp-server-actions {
+  display: flex;
+  gap: 4px;
+  flex-shrink: 0;
+}
+
+.goby-mcp-server-actions button {
+  font-size: 12px;
+  border: 1px solid #e5e7eb;
+  border-radius: 3px;
+  padding: 2px 6px;
+  cursor: pointer;
+  background: white;
+}
+
+.goby-mcp-server-actions button:hover {
+  background: #f3f4f6;
+}
+
+.goby-mcp-status-connected {
+  color: #059669;
+}
+
+.goby-mcp-status-failed {
+  color: #dc2626;
+}
+
+.goby-mcp-status-untested {
+  color: #6b7280;
+}
+
+.goby-mcp-no-servers {
+  font-size: 12px;
+  color: #6b7280;
+  padding: 16px 0;
+  text-align: center;
+}
+
+.goby-mcp-form-overlay {
+  background: #ffffff;
+  border: 1px solid #e5e7eb;
+  border-radius: 6px;
+  padding: 12px;
+  margin-top: 8px;
+}
+
+.goby-mcp-feedback {
+  font-size: 11px;
+  padding: 4px 8px;
+  border-radius: 4px;
+  margin-bottom: 8px;
+  display: none;
+}
+
+.goby-mcp-feedback.visible {
+  display: block;
+}
+
+.goby-mcp-feedback.success {
+  background: #f0fdf4;
+  color: #166534;
+  border-left: 3px solid #22c55e;
+}
+
+.goby-mcp-feedback.error {
+  background: #fef2f2;
+  color: #991b1b;
+  border-left: 3px solid #ef4444;
+}
