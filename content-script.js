@@ -2225,6 +2225,52 @@
     {
       type: 'function',
       function: {
+        name: 'page_scroll',
+        description: '滚动页面：上/下/顶/底。长页面提取内容、无限滚动加载更多、定位视口外元素时使用。向下滚动一屏后可用 page_query / page_list_elements 检查新出现的内容。注意：滚动后可能触发懒加载，需等 200ms 再查询。',
+        parameters: {
+          type: 'object',
+          properties: {
+            direction: { type: 'string', description: '滚动方向：down（向下，默认）、up（向上）、top（回到顶部）、bottom（滚到底部）', default: 'down' },
+            amount: { type: 'number', description: '像素数（默认 0=一屏视口高度）。对 top/bottom 无效。' }
+          }
+        }
+      },
+      timeout: 15000,
+      execute: function (args) {
+        try {
+          var dir = (args && args.direction) || 'down';
+          var amount = (args && args.amount) || 0;
+          var innerH = window.innerHeight;
+
+          if (dir === 'top') {
+            window.scrollTo({ top: 0, behavior: 'smooth' });
+            return '已滚动到页面顶部 (scrollY=0)';
+          }
+          if (dir === 'bottom') {
+            var maxScroll = Math.max(document.body.scrollHeight - innerH, 0);
+            window.scrollTo({ top: maxScroll, behavior: 'smooth' });
+            return '已滚动到页面底部 (scrollY=' + maxScroll + ')';
+          }
+
+          var pixels = amount > 0 ? amount : innerH;
+          if (dir === 'up') pixels = -pixels;
+          window.scrollBy({ top: pixels, behavior: 'smooth' });
+
+          var newScrollY = window.scrollY;
+          var maxScroll = Math.max(document.body.scrollHeight - innerH, 0);
+          var atTop = newScrollY <= 0;
+          var atBottom = newScrollY >= maxScroll;
+          return '已滚动' + (dir === 'up' ? '上' : '下') + ' ' + Math.abs(pixels) + 'px\n位置: scrollY=' + newScrollY + '/' + maxScroll + '\n' +
+            (atTop ? '[已到顶]' : '') + (atBottom ? '[已到底]' : '') +
+            (atBottom && !atTop ? '\n如需继续滚动或提取内容，请用 page_query / page_query / page_screenshot 等工具' : '');
+        } catch (e) {
+          return 'Error: 滚动失败 - ' + (e.message || '未知错误');
+        }
+      }
+    },
+    {
+      type: 'function',
+      function: {
         name: 'page_evaluate',
         description: '在页面主世界中执行 JavaScript 表达式',
         parameters: {
@@ -5269,7 +5315,7 @@
       }
 
       // 只对有明显页面操作模式的 domain 生成技能（至少用到 DOM 操作工具）
-      var domTools = ['page_fill', 'page_click', 'page_submit', 'page_query', 'page_list_elements', 'page_evaluate', 'page_wait'];
+      var domTools = ['page_fill', 'page_click', 'page_submit', 'page_query', 'page_list_elements', 'page_evaluate', 'page_wait', 'page_scroll'];
       var hasDomOps = false;
       for (var d = 0; d < uniqueTools.length; d++) {
         if (domTools.indexOf(uniqueTools[d]) !== -1) { hasDomOps = true; break; }
