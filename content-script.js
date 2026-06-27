@@ -2463,7 +2463,7 @@
    * @returns {string}
    */
   function _buildToolListLines() {
-    var allTools = nativeTools.concat(_activeSkillTools);
+    var allTools = nativeTools.concat(_activeSkillTools).concat(_activeMcpTools);
     return allTools.map(function (t) {
       return '- ' + t.function.name + ': ' + t.function.description;
     }).join('\n');
@@ -2707,8 +2707,8 @@
       // ★ 净化消息格式 — 确保 API 兼容
       var cleanMessages = sanitizeMessages(messages);
 
-      // 构造 tools 参数（nativeTools + 已注册技能工具）
-      var allTools = nativeTools.concat(_activeSkillTools);
+      // 构造 tools 参数（nativeTools + 已注册技能工具 + MCP 工具）
+      var allTools = nativeTools.concat(_activeSkillTools).concat(_activeMcpTools);
       var tools = allTools.map(function (t) {
         return { type: 'function', function: t.function };
       });
@@ -3714,15 +3714,17 @@
       }
     }
 
-    // 在 nativeTools 和已注册技能工具中查找匹配的工具
+    // 在 nativeTools、已注册技能工具和 MCP 工具中查找匹配的工具
     var toolDef = nativeTools.find(function (t) {
       return t.function.name === toolCall.function.name;
     }) || _activeSkillTools.find(function (t) {
       return t.function.name === toolCall.function.name;
+    }) || _activeMcpTools.find(function (t) {
+      return t.function.name === toolCall.function.name;
     });
 
     if (!toolDef) {
-      var availableTools = nativeTools.concat(_activeSkillTools).map(function (t) {
+      var availableTools = nativeTools.concat(_activeSkillTools).concat(_activeMcpTools).map(function (t) {
         return t.function.name;
       }).join(', ');
       // 使用 UnknownTool: 前缀（区别于 Error:），让 executeWithTimeout 能识别"未知工具"
@@ -3750,10 +3752,12 @@
     var toolName = toolCall.function.name;
     var timeout = TOOL_TIMEOUT;
 
-    // 在 nativeTools 和已注册技能工具中查找工具特定超时
+    // 在 nativeTools、已注册技能工具和 MCP 工具中查找工具特定超时
     var toolDef = nativeTools.find(function (t) {
       return t.function.name === toolName;
     }) || _activeSkillTools.find(function (t) {
+      return t.function.name === toolName;
+    }) || _activeMcpTools.find(function (t) {
       return t.function.name === toolName;
     });
     if (toolDef && toolDef.timeout) {
