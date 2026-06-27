@@ -24,7 +24,7 @@
 
 | | |
 | --- | --- |
-| **Tools for the live web** | 22 built-in tools + MCP server extensions — query, list, fill, click, check, select, submit, wait, evaluate, screenshot, analyze, navigate, open_tab, list_tabs, close_tab, finish_workflow, search bookmarks, and more. Connect Tavily, GitHub, Cloudflare or any Streamable HTTP MCP server. The page is the agent's workspace. |
+| **Tools for the live web** | 25 built-in tools + MCP server extensions — query, list, fill, click (selector / index dual mode), check, select, submit, wait, evaluate, screenshot, analyze, navigate, open_tab, list_tabs, close_tab, finish_workflow, search bookmarks, and more. Connect Tavily, GitHub, Cloudflare or any Streamable HTTP MCP server. The page is the agent's workspace. |
 | **Bring your own model** | Any OpenAI-compatible endpoint — OpenAI, DeepSeek, Qwen, GLM, or your own. Multiple profiles, switch on the fly. |
 | **A real tool-calling loop** | Streaming responses. Multi-step reasoning across chained tool calls. Up to 50 rounds per turn, 50 tools per session, 15 s per-tool timeout. Stop button to interrupt in-progress execution. |
 | **Cross-page autonomous navigation** | Agent can navigate to other pages, open new tabs, run tasks on them, and return results — all automatically. Worker tab progress streams back to the chat tab in real time. |
