@@ -1162,12 +1162,445 @@
       });
     }
 
+    // ---- MCP Servers 辅助函数 (Phase 10-03) ----
+    var _mcpFeedbackTimer = null;
+    // 连接状态缓存（不持久化到 storage，仅在 modal 打开期间保持）
+    var _mcpServerStatuses = {};
+
+    function showMcpFeedback(msg, type) {
+      if (_mcpFeedbackTimer) clearTimeout(_mcpFeedbackTimer);
+      var fb = document.getElementById('goby-mcp-feedback');
+      if (fb) {
+        fb.textContent = msg;
+        fb.className = 'goby-mcp-feedback visible ' + type;
+        _mcpFeedbackTimer = setTimeout(function () {
+          fb.className = 'goby-mcp-feedback';
+        }, 5000);
+      }
+    }
+
+    function hideMcpFeedback() {
+      if (_mcpFeedbackTimer) clearTimeout(_mcpFeedbackTimer);
+      var fb = document.getElementById('goby-mcp-feedback');
+      if (fb) {
+        fb.className = 'goby-mcp-feedback';
+      }
+    }
+
+    /**
+     * 刷新 MCP server 列表
+     */
+    function refreshMcpList() {
+      var mcpListEl = document.getElementById('goby-mcp-list');
+      var mcpNoServersEl = document.getElementById('goby-mcp-no-servers');
+      if (!mcpListEl || !mcpNoServersEl) return;
+
+      GobyStorage.getAllMcpServers().then(function (servers) {
+        var serverIds = Object.keys(servers);
+        mcpListEl.innerHTML = '';
+
+        if (serverIds.length === 0) {
+          mcpNoServersEl.style.display = 'block';
+          return;
+        }
+
+        mcpNoServersEl.style.display = 'none';
+        for (var i = 0; i < serverIds.length; i++) {
+          var id = serverIds[i];
+          var server = servers[id];
+          // 从状态缓存附加连接状态和工具数
+          if (_mcpServerStatuses[id]) {
+            server._connectionStatus = _mcpServerStatuses[id].status;
+            server._toolCount = _mcpServerStatuses[id].toolCount;
+          } else {
+            server._connectionStatus = 'untested';
+          }
+          renderMcpServerCard(mcpListEl, id, server);
+        }
+      }).catch(function () {
+        // 静默降级
+      });
+    }
+
+    /**
+     * 渲染单个 MCP server 卡片
+     */
+    function renderMcpServerCard(container, id, server) {
+      var card = document.createElement('div');
+      card.className = 'goby-mcp-server-card';
+      card.id = 'goby-mcp-server-' + id;
+
+      // Header 行：名称 + toggle + 状态
+      var header = document.createElement('div');
+      header.className = 'goby-mcp-server-header';
+
+      var nameEl = document.createElement('span');
+      nameEl.className = 'goby-mcp-server-name';
+      nameEl.textContent = server.name || id;
+
+      var headerRight = document.createElement('div');
+      headerRight.style.cssText = 'display:flex;align-items:center;gap:8px;';
+
+      // 状态标签
+      var statusLabel = document.createElement('span');
+      var status = server._connectionStatus || 'untested';
+      statusLabel.className = 'goby-mcp-status-' + status;
+      statusLabel.style.cssText = 'font-size:11px;';
+      statusLabel.textContent = t('modal.mcp_status_' + status);
+      headerRight.appendChild(statusLabel);
+
+      // Enabled toggle
+      var toggleSwitch = document.createElement('label');
+      toggleSwitch.className = 'toggle-switch';
+      toggleSwitch.style.cssText = 'width:36px;height:20px;';
+
+      var toggleInput = document.createElement('input');
+      toggleInput.type = 'checkbox';
+      toggleInput.checked = server.enabled !== false;
+
+      var toggleSlider = document.createElement('span');
+      toggleSlider.className = 'toggle-slider';
+      toggleSlider.style.cssText = 'border-radius:10px;width:36px;height:20px;';
+
+      toggleSwitch.appendChild(toggleInput);
+      toggleSwitch.appendChild(toggleSlider);
+      headerRight.appendChild(toggleSwitch);
+
+      header.appendChild(nameEl);
+      header.appendChild(headerRight);
+
+      // Meta 行：endpoint + 工具数
+      var meta = document.createElement('div');
+      meta.className = 'goby-mcp-server-meta';
+
+      var endpointText = document.createElement('span');
+      endpointText.textContent = server.endpoint || '';
+      meta.appendChild(endpointText);
+
+      if (server._toolCount !== undefined) {
+        var sep = document.createElement('span');
+        sep.textContent = ' · ';
+        meta.appendChild(sep);
+
+        var toolCount = document.createElement('span');
+        toolCount.textContent = t('modal.mcp_tool_count', { n: server._toolCount });
+        meta.appendChild(toolCount);
+      }
+
+      // Actions 组
+      var actions = document.createElement('div');
+      actions.className = 'goby-mcp-server-actions';
+
+      var editBtn = document.createElement('button');
+      editBtn.textContent = '编辑';
+      editBtn.style.cursor = 'pointer';
+
+      var deleteBtn = document.createElement('button');
+      deleteBtn.className = 'delete-btn';
+      deleteBtn.textContent = '删除';
+      deleteBtn.style.cursor = 'pointer';
+
+      actions.appendChild(editBtn);
+      actions.appendChild(deleteBtn);
+
+      card.appendChild(header);
+      card.appendChild(meta);
+      card.appendChild(actions);
+      container.appendChild(card);
+
+      // ---- 事件绑定 ----
+
+      // Toggle 事件
+      toggleInput.addEventListener('change', function (capturedId) {
+        return function () {
+          var newEnabled = toggleInput.checked;
+          GobyStorage.toggleMcpServer(capturedId, newEnabled).then(function (success) {
+            if (success) {
+              // 切换后重新加载 MCP 工具
+              if (window.__gobyInternals && typeof window.__gobyInternals.loadMcpTools === 'function') {
+                window.__gobyInternals.loadMcpTools();
+              }
+            } else {
+              // 恢复原状态
+              toggleInput.checked = !newEnabled;
+            }
+          }).catch(function () {
+            toggleInput.checked = !newEnabled;
+          });
+        };
+      }(id));
+
+      // 编辑按钮事件
+      editBtn.addEventListener('click', function (capturedId) {
+        return function () {
+          openMcpForm(capturedId);
+        };
+      }(id));
+
+      // 删除按钮事件
+      deleteBtn.addEventListener('click', function (capturedId, capturedName) {
+        return function () {
+          var confirmMsg = t('modal.mcp_delete_confirm', { name: capturedName });
+          if (window.confirm(confirmMsg)) {
+            GobyStorage.deleteMcpServer(capturedId).then(function (success) {
+              if (success) {
+                hideMcpFeedback();
+                showMcpFeedback(t('modal.mcp_delete_success', { name: capturedName }), 'success');
+                refreshMcpList();
+                // 删除后重新加载 MCP 工具
+                if (window.__gobyInternals && typeof window.__gobyInternals.loadMcpTools === 'function') {
+                  window.__gobyInternals.loadMcpTools();
+                }
+              }
+            }).catch(function () {
+              // 静默降级
+            });
+          }
+        };
+      }(id, server.name));
+    }
+
+    /**
+     * 打开 MCP server 添加/编辑表单
+     * @param {string|null} editId - 编辑模式时传入 server id，添加模式传 null
+     */
+    function openMcpForm(editId) {
+      var mcpListEl = document.getElementById('goby-mcp-list');
+      if (!mcpListEl) return;
+
+      // 如果已有表单，先移除
+      var existingForm = document.getElementById('goby-mcp-form-overlay');
+      if (existingForm) existingForm.remove();
+
+      var isEdit = !!editId;
+      var editData = null;
+
+      // 编辑模式：从 storage 加载现有配置
+      var loadPromise;
+      if (isEdit) {
+        loadPromise = GobyStorage.getMcpServer(editId).then(function (server) {
+          editData = server;
+          if (!editData) {
+            showMcpFeedback('Server not found', 'error');
+            return null;
+          }
+          return editData;
+        });
+      } else {
+        loadPromise = Promise.resolve(null);
+      }
+
+      loadPromise.then(function () {
+        if (isEdit && !editData) return;
+
+        var formOverlay = document.createElement('div');
+        formOverlay.className = 'goby-mcp-form-overlay';
+        formOverlay.id = 'goby-mcp-form-overlay';
+
+        // Name 字段
+        var nameGroup = document.createElement('div');
+        nameGroup.className = 'form-group';
+        var nameLabel = document.createElement('label');
+        nameLabel.textContent = t('modal.mcp_name_label');
+        nameLabel.style.fontSize = '12px';
+        var nameInput = document.createElement('input');
+        nameInput.type = 'text';
+        nameInput.id = 'goby-mcp-form-name';
+        nameInput.placeholder = t('modal.mcp_name_placeholder');
+        nameInput.value = editData ? (editData.name || '') : '';
+        nameInput.style.cssText = 'width:100%;height:32px;padding:4px 8px;border:1px solid #e5e7eb;border-radius:4px;font-size:12px;box-sizing:border-box;';
+        nameGroup.appendChild(nameLabel);
+        nameGroup.appendChild(nameInput);
+
+        // Endpoint 字段
+        var endpointGroup = document.createElement('div');
+        endpointGroup.className = 'form-group';
+        var endpointLabel = document.createElement('label');
+        endpointLabel.textContent = t('modal.mcp_endpoint_label');
+        endpointLabel.style.fontSize = '12px';
+        var endpointInput = document.createElement('input');
+        endpointInput.type = 'url';
+        endpointInput.id = 'goby-mcp-form-endpoint';
+        endpointInput.placeholder = t('modal.mcp_endpoint_placeholder');
+        endpointInput.value = editData ? (editData.endpoint || '') : '';
+        endpointInput.style.cssText = 'width:100%;height:32px;padding:4px 8px;border:1px solid #e5e7eb;border-radius:4px;font-size:12px;box-sizing:border-box;';
+        endpointGroup.appendChild(endpointLabel);
+        endpointGroup.appendChild(endpointInput);
+
+        // Token 字段（带眼 toggle）
+        var tokenGroup = document.createElement('div');
+        tokenGroup.className = 'form-group';
+        var tokenLabel = document.createElement('label');
+        tokenLabel.textContent = t('modal.mcp_token_label');
+        tokenLabel.style.fontSize = '12px';
+        var tokenWrapper = document.createElement('div');
+        tokenWrapper.style.cssText = 'position:relative;display:flex;align-items:center;';
+        var tokenInput = document.createElement('input');
+        tokenInput.type = 'password';
+        tokenInput.id = 'goby-mcp-form-token';
+        tokenInput.placeholder = t('modal.mcp_token_placeholder');
+        tokenInput.value = editData ? (editData.token || '') : '';
+        tokenInput.style.cssText = 'width:100%;height:32px;padding:4px 8px;border:1px solid #e5e7eb;border-radius:4px;font-size:12px;box-sizing:border-box;padding-right:28px;';
+        var tokenEye = document.createElement('button');
+        tokenEye.type = 'button';
+        tokenEye.textContent = '\u{1F441}';
+        tokenEye.style.cssText = 'position:absolute;right:4px;top:50%;transform:translateY(-50%);background:none;border:none;cursor:pointer;font-size:12px;padding:2px;';
+        tokenEye.addEventListener('click', function () {
+          if (tokenInput.type === 'password') {
+            tokenInput.type = 'text';
+            tokenEye.textContent = '\u{1F648}';
+          } else {
+            tokenInput.type = 'password';
+            tokenEye.textContent = '\u{1F441}';
+          }
+        });
+        tokenWrapper.appendChild(tokenInput);
+        tokenWrapper.appendChild(tokenEye);
+        tokenGroup.appendChild(tokenLabel);
+        tokenGroup.appendChild(tokenWrapper);
+
+        // Enabled checkbox
+        var enabledRow = document.createElement('div');
+        enabledRow.style.cssText = 'display:flex;align-items:center;gap:6px;margin-bottom:8px;';
+        var enabledInput = document.createElement('input');
+        enabledInput.type = 'checkbox';
+        enabledInput.id = 'goby-mcp-form-enabled';
+        enabledInput.checked = editData ? (editData.enabled !== false) : true;
+        var enabledLabel = document.createElement('label');
+        enabledLabel.htmlFor = 'goby-mcp-form-enabled';
+        enabledLabel.textContent = t('modal.mcp_enabled_label');
+        enabledLabel.style.fontSize = '12px';
+        enabledRow.appendChild(enabledInput);
+        enabledRow.appendChild(enabledLabel);
+
+        // 按钮行
+        var btnRow = document.createElement('div');
+        btnRow.style.cssText = 'display:flex;gap:6px;margin-top:8px;';
+
+        var saveFormBtn = document.createElement('button');
+        saveFormBtn.textContent = t('modal.mcp_save_btn');
+        saveFormBtn.style.cssText = 'height:28px;padding:0 12px;border:none;border-radius:4px;background:linear-gradient(135deg,#667eea,#764ba2);color:#fff;font-size:12px;font-weight:600;cursor:pointer;';
+
+        var cancelFormBtn = document.createElement('button');
+        cancelFormBtn.textContent = '取消';
+        cancelFormBtn.style.cssText = 'height:28px;padding:0 12px;border:1px solid #e5e7eb;border-radius:4px;background:#fff;color:#6b7280;font-size:12px;cursor:pointer;';
+
+        btnRow.appendChild(saveFormBtn);
+        btnRow.appendChild(cancelFormBtn);
+
+        formOverlay.appendChild(nameGroup);
+        formOverlay.appendChild(endpointGroup);
+        formOverlay.appendChild(tokenGroup);
+        formOverlay.appendChild(enabledRow);
+        formOverlay.appendChild(btnRow);
+
+        // 插入到列表前面
+        mcpListEl.parentNode.insertBefore(formOverlay, mcpListEl);
+
+        // 聚焦到 name 输入框
+        setTimeout(function () { nameInput.focus(); }, 50);
+
+        // ---- 表单事件绑定 ----
+
+        // 取消
+        cancelFormBtn.addEventListener('click', function () {
+          formOverlay.remove();
+        });
+
+        // 保存
+        saveFormBtn.addEventListener('click', function () {
+          var name = nameInput.value.trim();
+          var endpoint = endpointInput.value.trim();
+          var token = tokenInput.value;
+          var enabled = enabledInput.checked;
+
+          // 校验
+          if (!name) {
+            showMcpFeedback('名称不能为空', 'error');
+            nameInput.focus();
+            return;
+          }
+          if (!endpoint) {
+            showMcpFeedback('Endpoint URL 不能为空', 'error');
+            endpointInput.focus();
+            return;
+          }
+          if (endpoint.indexOf('http://') !== 0 && endpoint.indexOf('https://') !== 0) {
+            showMcpFeedback('Endpoint URL 必须以 http:// 或 https:// 开头', 'error');
+            endpointInput.focus();
+            return;
+          }
+
+          // 生成或复用 id
+          var serverId = editId || (Date.now().toString(36) + Math.random().toString(36).slice(2, 6));
+
+          var config = {
+            id: serverId,
+            name: name,
+            endpoint: endpoint,
+            token: token,
+            enabled: enabled
+          };
+
+          // 禁用按钮防重复提交
+          saveFormBtn.disabled = true;
+          saveFormBtn.textContent = t('modal.mcp_verifying');
+
+          // 保存到 storage
+          GobyStorage.saveMcpServer(serverId, config).then(function () {
+            // 更新状态标签为验证中
+            refreshMcpList();
+
+            showMcpFeedback(t('modal.mcp_verifying'), 'success');
+
+            // 保存后自动验证连接
+            return sendToSW('mcp-list-tools', {
+              action: 'mcp-list-tools',
+              serverId: serverId,
+              endpoint: endpoint,
+              token: token
+            }).then(function (response) {
+              var isOk = response && response.ok;
+              var toolCount = (response && Array.isArray(response.tools)) ? response.tools.length : 0;
+
+              // 更新状态缓存
+              _mcpServerStatuses[serverId] = {
+                status: isOk ? 'connected' : 'failed',
+                toolCount: toolCount
+              };
+
+              // 移除表单
+              formOverlay.remove();
+
+              // 刷新列表展示状态
+              refreshMcpList();
+
+              // 成功后重新加载 MCP 工具
+              if (isOk && window.__gobyInternals && typeof window.__gobyInternals.loadMcpTools === 'function') {
+                window.__gobyInternals.loadMcpTools();
+              }
+              return null;
+            });
+          }).catch(function (err) {
+            saveFormBtn.disabled = false;
+            saveFormBtn.textContent = t('modal.mcp_save_btn');
+            showMcpFeedback(t('modal.mcp_save_fail', { msg: err.message || String(err) }), 'error');
+          });
+        });
+      }).catch(function () {
+        // 静默降级
+      });
+    }
+
+    // ---- MCP 事件绑定 ----
+
+    // 添加 Server 按钮
+    mcpAddBtn.addEventListener('click', function () {
+      openMcpForm(null);
+    });
+
     // Save button
     var saveBtn = document.createElement('button');
-    saveBtn.className = 'goby-modal-save-btn';
-    saveBtn.id = 'modal-save-btn';
-    saveBtn.textContent = t('modal.save_btn');
-    body.appendChild(saveBtn);
 
     // Save status
     var saveStatus = document.createElement('div');
