@@ -280,16 +280,6 @@
     '.goby-status-dot.gray { background-color: #9ca3af; }',
     '.goby-status-round { font-size: 11px; color: #6b7280; white-space: nowrap; }',
     '',
-    '/* 拖拽把手 */',
-    '.goby-resize-handle { height: 4px; background: transparent;',
-    '  cursor: ns-resize; flex-shrink: 0; transition: background 0.15s;',
-    '  border-top: 1px solid #e5e7eb; }',
-    '.goby-resize-handle:hover { background: rgba(102,126,234,0.1); }',
-    '.goby-resize-handle:active { background: rgba(102,126,234,0.2); }',
-    '',
-    '/* 拖拽时防止文字选中 */',
-    '.goby-panel.resizing { user-select: none; }',
-    '',
     '@keyframes msgFadeIn {',
     '  from { opacity: 0; transform: translateY(8px); }',
     '  to { opacity: 1; transform: translateY(0); }',
@@ -405,7 +395,16 @@
     '  background: rgba(255,255,255,0.6); color: inherit;',
     '  font-family: inherit; transition: background 0.15s; }',
     '.goby-tool-expand-btn:hover { background: rgba(255,255,255,0.9); }',
-    '@keyframes toolCallPulse { 0%, 100% { opacity: 1; } 50% { opacity: 0.6; } }'
+    '@keyframes toolCallPulse { 0%, 100% { opacity: 1; } 50% { opacity: 0.6; } }',
+    '.goby-resize-handle { position: absolute; z-index: 10; }',
+    '.goby-resize-handle[data-dir="n"]  { top: -4px; left: 14px; right: 14px; height: 8px; cursor: ns-resize; }',
+    '.goby-resize-handle[data-dir="s"]  { bottom: -4px; left: 14px; right: 14px; height: 8px; cursor: ns-resize; }',
+    '.goby-resize-handle[data-dir="e"]  { top: 14px; bottom: 14px; right: -4px; width: 8px; cursor: ew-resize; }',
+    '.goby-resize-handle[data-dir="w"]  { top: 14px; bottom: 14px; left: -4px; width: 8px; cursor: ew-resize; }',
+    '.goby-resize-handle[data-dir="ne"] { top: -4px; right: -4px; width: 14px; height: 14px; cursor: nesw-resize; }',
+    '.goby-resize-handle[data-dir="nw"] { top: -4px; left: -4px; width: 14px; height: 14px; cursor: nwse-resize; }',
+    '.goby-resize-handle[data-dir="se"] { bottom: -4px; right: -4px; width: 14px; height: 14px; cursor: nwse-resize; }',
+    '.goby-resize-handle[data-dir="sw"] { bottom: -4px; left: -4px; width: 14px; height: 14px; cursor: nesw-resize; }'
   ].join('\n');
 
   // ============================================================
@@ -472,26 +471,31 @@
     // 检查是否已存在（防重复注入）
     if (document.querySelector('.goby-floating-ball')) return;
 
+    var BALL_SIZE = 44;
+    var DEFAULT_MARGIN = 20;
+    var DRAG_THRESHOLD = 5;
+
     var ball = document.createElement('div');
     ball.className = 'goby-floating-ball';
     ball.title = t('panel.ball_tooltip');
 
     // 基本尺寸和定位（内联样式，确保 agent-panel.css 加载前可用）
-    ball.style.width = '44px';
-    ball.style.height = '44px';
+    ball.style.width = BALL_SIZE + 'px';
+    ball.style.height = BALL_SIZE + 'px';
     ball.style.borderRadius = '50%';
     ball.style.background = 'linear-gradient(135deg, #667eea, #764ba2)';
     ball.style.position = 'fixed';
-    ball.style.bottom = '20px';
-    ball.style.right = '20px';
+    // 用 left/top 而非 bottom/right，便于拖拽绝对定位
     ball.style.zIndex = '2147483647';
-    ball.style.cursor = 'pointer';
+    ball.style.cursor = 'grab';
     ball.style.boxShadow = '0 4px 12px rgba(0,0,0,0.2)';
     ball.style.transition = 'transform 0.2s ease, box-shadow 0.2s ease';
     ball.style.border = '2px solid rgba(255,255,255,0.3)';
     ball.style.display = 'flex';
     ball.style.alignItems = 'center';
     ball.style.justifyContent = 'center';
+    ball.style.userSelect = 'none';
+    ball.style.touchAction = 'none'; // pointer events 不被页面滚动抢占
     ball.innerHTML =
       '<svg viewBox="0 0 128 128" width="28" height="28" fill="none" ' +
       'stroke="#ffffff" stroke-width="5" stroke-linecap="round" stroke-linejoin="round">' +
@@ -501,14 +505,123 @@
       '<circle cx="76" cy="60" r="4" fill="#ffffff" stroke="none"/>' +
       '</svg>';
 
-    // 点击切换面板
+    function applyDefaultPosition() {
+      ball.style.left = Math.max(0, window.innerWidth - BALL_SIZE - DEFAULT_MARGIN) + 'px';
+      ball.style.top = Math.max(0, window.innerHeight - BALL_SIZE - DEFAULT_MARGIN) + 'px';
+    }
+
+    function clampPosition(left, top) {
+      var maxLeft = Math.max(0, window.innerWidth - BALL_SIZE);
+      var maxTop = Math.max(0, window.innerHeight - BALL_SIZE);
+      return {
+        x: Math.max(0, Math.min(maxLeft, left)),
+        y: Math.max(0, Math.min(maxTop, top))
+      };
+    }
+
+    function applyPosition(left, top) {
+      var pos = clampPosition(left, top);
+      ball.style.left = pos.x + 'px';
+      ball.style.top = pos.y + 'px';
+      return pos;
+    }
+
+    function persistPosition() {
+      var x = parseFloat(ball.style.left);
+      var y = parseFloat(ball.style.top);
+      if (!isNaN(x) && !isNaN(y)) {
+        chrome.storage.local.set({ gobyBallPosition: { x: x, y: y } });
+      }
+    }
+
+    // 从 storage 恢复位置；否则用默认右下角
+    var positionPromise = chrome.storage.local.get(['gobyBallPosition']).then(function (result) {
+      var pos = result && result.gobyBallPosition;
+      if (pos && typeof pos.x === 'number' && typeof pos.y === 'number') {
+        applyPosition(pos.x, pos.y);
+      } else {
+        applyDefaultPosition();
+      }
+    }).catch(function () {
+      applyDefaultPosition();
+    });
+
+    // ====== 拖拽逻辑（pointer events 同时覆盖鼠标和触摸） ======
+    var drag = null; // { startX, startY, originLeft, originTop, moved, pointerId }
+
+    ball.addEventListener('pointerdown', function (e) {
+      if (e.pointerType === 'mouse' && e.button !== 0) return; // 仅左键
+      drag = {
+        startX: e.clientX,
+        startY: e.clientY,
+        originLeft: parseFloat(ball.style.left) || 0,
+        originTop: parseFloat(ball.style.top) || 0,
+        moved: false,
+        pointerId: e.pointerId
+      };
+      try { ball.setPointerCapture(e.pointerId); } catch (_) {}
+      ball.style.cursor = 'grabbing';
+      ball.style.transition = 'none'; // 暂停 hover 缩放过渡，避免拖动滞后
+    });
+
+    ball.addEventListener('pointermove', function (e) {
+      if (!drag) return;
+      var dx = e.clientX - drag.startX;
+      var dy = e.clientY - drag.startY;
+      if (!drag.moved && Math.hypot(dx, dy) > DRAG_THRESHOLD) {
+        drag.moved = true;
+      }
+      if (drag.moved) {
+        applyPosition(drag.originLeft + dx, drag.originTop + dy);
+      }
+    });
+
+    function endDrag(e) {
+      if (!drag) return;
+      var wasDragged = drag.moved;
+      if (e && drag.pointerId !== undefined) {
+        try { ball.releasePointerCapture(drag.pointerId); } catch (_) {}
+      }
+      ball.style.cursor = 'grab';
+      ball.style.transition = '';
+      if (wasDragged) {
+        persistPosition();
+        // 抑制随后的 click 触发 toggle
+        ball.dataset.suppressClick = '1';
+        setTimeout(function () {
+          delete ball.dataset.suppressClick;
+        }, 60);
+      }
+      drag = null;
+    }
+
+    ball.addEventListener('pointerup', endDrag);
+    ball.addEventListener('pointercancel', endDrag);
+
+    // 点击切换面板（仅在未拖动时）
     ball.addEventListener('click', function (e) {
+      if (ball.dataset.suppressClick === '1') {
+        e.stopPropagation();
+        e.preventDefault();
+        return;
+      }
       e.stopPropagation();
       GobyPanel.toggle();
     });
 
+    // 窗口尺寸变化时把球拉回视口内
+    window.addEventListener('resize', function () {
+      var left = parseFloat(ball.style.left);
+      var top = parseFloat(ball.style.top);
+      if (!isNaN(left) && !isNaN(top)) {
+        applyPosition(left, top);
+      }
+    });
+
     document.documentElement.appendChild(ball);
     _ball = ball;
+
+    return positionPromise;
   }
 
   // ============================================================
@@ -779,12 +892,77 @@
     // 检查面板是否已存在（防重复创建）
     if (document.getElementById('goby-panel-host')) return;
 
+    var DEFAULT_PANEL_W = 400;
+    var DEFAULT_PANEL_H = 480;
+    var DEFAULT_RIGHT_MARGIN = 20;
+    var DEFAULT_BOTTOM_MARGIN = 80;
+    var MIN_PANEL_W = 320;
+    var MIN_PANEL_H = 360;
+
     var host = document.createElement('div');
     host.id = 'goby-panel-host';
     host.style.position = 'fixed';
-    host.style.bottom = '80px';
-    host.style.right = '20px';
     host.style.zIndex = '2147483646';
+
+    function applyDefaultGeometry() {
+      host.style.width = DEFAULT_PANEL_W + 'px';
+      host.style.height = DEFAULT_PANEL_H + 'px';
+      host.style.left = Math.max(0, window.innerWidth - DEFAULT_PANEL_W - DEFAULT_RIGHT_MARGIN) + 'px';
+      host.style.top = Math.max(0, window.innerHeight - DEFAULT_PANEL_H - DEFAULT_BOTTOM_MARGIN) + 'px';
+    }
+
+    function clampGeometry(left, top, w, h) {
+      w = Math.max(MIN_PANEL_W, Math.min(window.innerWidth, w));
+      h = Math.max(MIN_PANEL_H, Math.min(window.innerHeight, h));
+      var maxLeft = Math.max(0, window.innerWidth - w);
+      var maxTop = Math.max(0, window.innerHeight - h);
+      left = Math.max(0, Math.min(maxLeft, left));
+      top = Math.max(0, Math.min(maxTop, top));
+      return { left: left, top: top, w: w, h: h };
+    }
+
+    function applyGeometry(left, top, w, h) {
+      var g = clampGeometry(left, top, w, h);
+      host.style.left = g.left + 'px';
+      host.style.top = g.top + 'px';
+      host.style.width = g.w + 'px';
+      host.style.height = g.h + 'px';
+    }
+
+    function persistGeometry() {
+      var left = parseFloat(host.style.left);
+      var top = parseFloat(host.style.top);
+      var w = parseFloat(host.style.width);
+      var h = parseFloat(host.style.height);
+      if ([left, top, w, h].some(function (n) { return isNaN(n); })) return;
+      chrome.storage.local.set({
+        gobyPanelGeometry: { left: left, top: top, w: w, h: h }
+      });
+    }
+
+    // 同步设置默认几何（确保 host 元素立刻有 left/top/width/height），
+    // 然后异步从 storage 加载持久化几何覆盖。
+    applyDefaultGeometry();
+
+    chrome.storage.local.get(['gobyPanelGeometry']).then(function (result) {
+      var g = result && result.gobyPanelGeometry;
+      if (g && typeof g.left === 'number' && typeof g.top === 'number' &&
+          typeof g.w === 'number' && typeof g.h === 'number') {
+        applyGeometry(g.left, g.top, g.w, g.h);
+      }
+    }).catch(function () {
+      /* 用已设置的默认几何 */
+    });
+
+    // 窗口尺寸变化时把面板拉回视口
+    window.addEventListener('resize', function () {
+      var left = parseFloat(host.style.left);
+      var top = parseFloat(host.style.top);
+      var w = parseFloat(host.style.width);
+      var h = parseFloat(host.style.height);
+      if ([left, top, w, h].some(function (n) { return isNaN(n); })) return;
+      applyGeometry(left, top, w, h);
+    });
 
     // 创建 Shadow DOM
     var shadow = host.attachShadow({ mode: 'open' });
@@ -796,10 +974,80 @@
     // 创建面板容器
     var panel = document.createElement('div');
     panel.className = 'goby-panel ' + (state.isVisible ? 'goby-panel-visible' : 'goby-panel-hidden');
-    panel.style.width = '400px';
-    panel.style.height = '480px';
+    panel.style.width = '100%';
+    panel.style.height = '100%';
     panel.style.transition = 'transform 200ms ease, opacity 200ms ease';
     panel.style.position = 'relative'; // 会话侧栏依赖相对定位
+
+    // ====== 面板四边/四角 resize handles ======
+    var resize = null; // { dir, startX, startY, originLeft, originTop, originW, originH, pointerId }
+
+    function applyResize(dx, dy) {
+      if (!resize) return;
+      var dir = resize.dir;
+      var newLeft = resize.originLeft;
+      var newTop = resize.originTop;
+      var newW = resize.originW;
+      var newH = resize.originH;
+      if (dir.indexOf('e') >= 0) newW = resize.originW + dx;
+      if (dir.indexOf('s') >= 0) newH = resize.originH + dy;
+      if (dir.indexOf('w') >= 0) {
+        newW = resize.originW - dx;
+        newLeft = resize.originLeft + dx;
+      }
+      if (dir.indexOf('n') >= 0) {
+        newH = resize.originH - dy;
+        newTop = resize.originTop + dy;
+      }
+      // 最小尺寸约束：若达下限，反向锁住对应边位置
+      if (newW < MIN_PANEL_W) {
+        if (dir.indexOf('w') >= 0) newLeft = resize.originLeft + (resize.originW - MIN_PANEL_W);
+        newW = MIN_PANEL_W;
+      }
+      if (newH < MIN_PANEL_H) {
+        if (dir.indexOf('n') >= 0) newTop = resize.originTop + (resize.originH - MIN_PANEL_H);
+        newH = MIN_PANEL_H;
+      }
+      applyGeometry(newLeft, newTop, newW, newH);
+    }
+
+    function createHandle(dir) {
+      var h = document.createElement('div');
+      h.className = 'goby-resize-handle';
+      h.dataset.dir = dir;
+      h.style.touchAction = 'none';
+      h.addEventListener('pointerdown', function (e) {
+        if (e.pointerType === 'mouse' && e.button !== 0) return;
+        e.stopPropagation();
+        e.preventDefault();
+        resize = {
+          dir: dir,
+          startX: e.clientX,
+          startY: e.clientY,
+          originLeft: parseFloat(host.style.left) || 0,
+          originTop: parseFloat(host.style.top) || 0,
+          originW: parseFloat(host.style.width) || DEFAULT_PANEL_W,
+          originH: parseFloat(host.style.height) || DEFAULT_PANEL_H,
+          pointerId: e.pointerId
+        };
+        try { h.setPointerCapture(e.pointerId); } catch (_) {}
+      });
+      h.addEventListener('pointermove', function (e) {
+        if (!resize) return;
+        applyResize(e.clientX - resize.startX, e.clientY - resize.startY);
+      });
+      function endResize() {
+        if (!resize) return;
+        if (resize.pointerId !== undefined) {
+          try { h.releasePointerCapture(resize.pointerId); } catch (_) {}
+        }
+        persistGeometry();
+        resize = null;
+      }
+      h.addEventListener('pointerup', endResize);
+      h.addEventListener('pointercancel', endResize);
+      return h;
+    }
 
     // ---- 标题栏 ----
     var header = document.createElement('div');
@@ -947,19 +1195,11 @@
     statusBar.appendChild(statusLeft);
     statusBar.appendChild(statusRoundEl);
 
-    // ---- 拖拽把手 ----
-    var resizeHandle = document.createElement('div');
-    resizeHandle.className = 'goby-resize-handle';
-    // 内联样式确保 JSDOM 测试可读取（同时 CSS class 提供相同约束）
-    resizeHandle.style.height = '4px';
-    resizeHandle.style.cursor = 'ns-resize';
-
     // 组装面板
     panel.appendChild(header);
     panel.appendChild(chatArea);
     panel.appendChild(inputBar);
     panel.appendChild(statusBar);
-    panel.appendChild(resizeHandle);
 
     // ---- Plan 03-03: 会话侧栏 (300px slide-in, 覆盖模式) ----
     var sidebar = document.createElement('div');
@@ -1235,6 +1475,11 @@
     shadow.appendChild(styleEl);
     shadow.appendChild(panel);
 
+    // 追加 8 个 resize handle（panel 之后，保证在堆叠上层）
+    ['n', 's', 'e', 'w', 'ne', 'nw', 'se', 'sw'].forEach(function (dir) {
+      shadow.appendChild(createHandle(dir));
+    });
+
     document.documentElement.appendChild(host);
     _host = host;
 
@@ -1251,7 +1496,6 @@
     _statusModelEl = statusModelEl;
     _statusDotEl = statusDotEl;
     _statusRoundEl = statusRoundEl;
-    _resizeHandle = resizeHandle;
 
     // ---- 事件绑定 ----
 
@@ -1288,49 +1532,6 @@
       } else {
         sendMessage();
       }
-    });
-
-    // ---- 拖拽 resize 逻辑 ----
-    // D-04: 高度范围 300-700px | D-05: 宽度不变、位置不变
-    var panelEl = panel;
-    var isResizing = false;
-    var startY = 0;
-    var startHeight = 0;
-
-    function onMouseMove(e) {
-      if (!isResizing) return;
-      e.preventDefault();
-
-      var deltaY = e.clientY - startY;
-      var newHeight = startHeight + deltaY;
-
-      // D-04: 限制 300-700px
-      newHeight = Math.min(700, Math.max(300, newHeight));
-
-      // D-05: 仅设置高度，宽度和位置不变
-      panelEl.style.height = newHeight + 'px';
-    }
-
-    function onMouseUp(e) {
-      if (!isResizing) return;
-      isResizing = false;
-      panelEl.classList.remove('resizing');
-
-      document.removeEventListener('mousemove', onMouseMove);
-      document.removeEventListener('mouseup', onMouseUp);
-    }
-
-    resizeHandle.addEventListener('mousedown', function (e) {
-      e.preventDefault();
-      isResizing = true;
-      startY = e.clientY;
-      // 优先使用 offsetHeight（真实浏览器），回退到 style.height（JSDOM 无布局时）
-      startHeight = panelEl.offsetHeight || parseInt(panelEl.style.height, 10) || 480;
-      panelEl.classList.add('resizing');
-
-      // 在 document 上绑定 mousemove 和 mouseup（支持拖出面板）
-      document.addEventListener('mousemove', onMouseMove);
-      document.addEventListener('mouseup', onMouseUp);
     });
   }
 
@@ -1618,7 +1819,8 @@
       return chrome.storage.local.get(['gobyPanelState']).then(function (result) {
         var prev = (result && result.gobyPanelState) || {};
         state.isVisible = prev.isVisible === true;
-        createFloatingBall();
+        return createFloatingBall();
+      }).then(function () {
         if (state.isVisible) {
           animateShow();
         }

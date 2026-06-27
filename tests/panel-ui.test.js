@@ -16,6 +16,19 @@ require('./__mocks__/chrome.js');
 require('../storage.js');
 require('../panel.js');
 
+// Polyfill PointerEvent for jsdom（生产代码用 pointer events 统一鼠标和触摸）
+if (typeof PointerEvent === 'undefined') {
+  function PolyfillPointerEvent(type, params) {
+    var ev = new MouseEvent(type, params || {});
+    ev.pointerId = (params && params.pointerId) !== undefined ? params.pointerId : 0;
+    ev.pointerType = (params && params.pointerType) || 'mouse';
+    return ev;
+  }
+  PolyfillPointerEvent.prototype = MouseEvent.prototype;
+  global.PointerEvent = PolyfillPointerEvent;
+  window.PointerEvent = PolyfillPointerEvent;
+}
+
 // ============================================================
 //  Describe: Floating Ball
 //  D-01, D-02, PANEL-10
@@ -35,15 +48,21 @@ describe('Floating Ball', function () {
       });
   });
 
-  it('renders a 44px floating ball at bottom-right of document.body', function () {
+  it('renders a 44px floating ball positioned within viewport (default bottom-right)', function () {
     return GobyPanel.init().then(function () {
       var ball = document.querySelector('.goby-floating-ball');
       expect(ball).not.toBeNull();
       expect(ball.style.width).toBe('44px');
       expect(ball.style.height).toBe('44px');
       expect(ball.style.position).toBe('fixed');
-      expect(ball.style.bottom).toBe('20px');
-      expect(ball.style.right).toBe('20px');
+      // 新行为：拖拽用 left/top（替代 bottom/right）
+      expect(ball.style.left).toMatch(/^\d+px$/);
+      expect(ball.style.top).toMatch(/^\d+px$/);
+      // 默认位置：贴近视口右下角
+      var left = parseInt(ball.style.left, 10);
+      var top = parseInt(ball.style.top, 10);
+      expect(left).toBe(window.innerWidth - 44 - 20);
+      expect(top).toBe(window.innerHeight - 44 - 20);
     });
   });
 
@@ -99,29 +118,33 @@ describe('Shadow DOM Panel Shell', function () {
     });
   });
 
-  it('renders panel at 400px width and 480px default height', function () {
+  it('renders panel host with 400x480 default geometry, panel fills host', function () {
     return GobyPanel.init().then(function () {
       return GobyPanel.show().then(function () {
         var host = document.getElementById('goby-panel-host');
         expect(host).not.toBeNull();
+        // 默认几何在 host 上（panel 是 100% 占满）
+        expect(host.style.width).toBe('400px');
+        expect(host.style.height).toBe('480px');
         var sr = host.shadowRoot;
         expect(sr).not.toBeNull();
         var panel = sr.querySelector('.goby-panel');
         expect(panel).not.toBeNull();
-        expect(panel.style.width).toBe('400px');
-        expect(panel.style.height).toBe('480px');
+        expect(panel.style.width).toBe('100%');
+        expect(panel.style.height).toBe('100%');
       });
     });
   });
 
-  it('positions panel fixed at bottom-right of viewport', function () {
+  it('positions panel fixed at bottom-right of viewport (via left/top)', function () {
     return GobyPanel.init().then(function () {
       return GobyPanel.show().then(function () {
         var host = document.getElementById('goby-panel-host');
         expect(host).not.toBeNull();
         expect(host.style.position).toBe('fixed');
-        expect(host.style.bottom).toBe('80px');
-        expect(host.style.right).toBe('20px');
+        // 新行为：用 left/top 替代 bottom/right（便于 resize 时绝对定位）
+        expect(parseInt(host.style.left, 10)).toBe(window.innerWidth - 400 - 20);
+        expect(parseInt(host.style.top, 10)).toBe(window.innerHeight - 480 - 80);
       });
     });
   });
@@ -538,8 +561,9 @@ describe('Status Bar', function () {
 });
 
 // ============================================================
-//  Describe: Drag Resize Handle
-//  PANEL-06, D-04, D-05 — 4px handle, 300-700px range, width/position fixed
+//  Describe: Drag Resize Handles
+//  Quick 260627-hae — 8 个 handle (n/s/e/w/ne/nw/se/sw)，pointer events，
+//  支持四边和四角调整大小，最小 320x360，位置/尺寸持久化
 // ============================================================
 
 describe('Drag Resize Handle', function () {
@@ -555,148 +579,209 @@ describe('Drag Resize Handle', function () {
       });
   });
 
-  it('has a 4px resize handle at the bottom of the panel', function () {
+  // jsdom 在新版本支持 PointerEvent；老版本回退到 MouseEvent
+  function makeEvent(type, props) {
+    var EvCtor = typeof PointerEvent !== 'undefined' ? PointerEvent : MouseEvent;
+    try {
+      return new EvCtor(type, Object.assign({ bubbles: true }, props));
+    } catch (e) {
+      return new MouseEvent(type, Object.assign({ bubbles: true }, props));
+    }
+  }
+
+  it('has 8 resize handles (n/s/e/w/ne/nw/se/sw) on the panel edges', function () {
     return GobyPanel.init().then(function () {
       return GobyPanel.show().then(function () {
         var host = document.getElementById('goby-panel-host');
         var sr = host.shadowRoot;
-        var handle = sr.querySelector('.goby-resize-handle');
-        expect(handle).not.toBeNull();
-        expect(handle.style.height).toBe('4px');
-        expect(handle.style.cursor).toBe('ns-resize');
+        var handles = sr.querySelectorAll('.goby-resize-handle');
+        expect(handles.length).toBe(8);
+        var dirs = Array.prototype.map.call(handles, function (h) { return h.dataset.dir; });
+        ['n', 's', 'e', 'w', 'ne', 'nw', 'se', 'sw'].forEach(function (d) {
+          expect(dirs).toContain(d);
+        });
       });
     });
   });
 
-  it('resizes panel height on mousedown + mousemove + mouseup', function () {
+  it('south handle increases panel height on pointer drag down', function () {
     return GobyPanel.init().then(function () {
       return GobyPanel.show().then(function () {
         var host = document.getElementById('goby-panel-host');
         var sr = host.shadowRoot;
-        var panel = sr.querySelector('.goby-panel');
-        var handle = sr.querySelector('.goby-resize-handle');
-        expect(panel).not.toBeNull();
+        var handle = sr.querySelector('.goby-resize-handle[data-dir="s"]');
         expect(handle).not.toBeNull();
 
-        // Set initial height
-        panel.style.height = '480px';
-        var initialHeight = parseInt(panel.style.height, 10);
+        var initialHeight = parseInt(host.style.height, 10);
 
-        // Simulate mousedown on the handle
-        var mousedownEvent = new MouseEvent('mousedown', { clientY: 100, bubbles: true });
-        handle.dispatchEvent(mousedownEvent);
+        handle.dispatchEvent(makeEvent('pointerdown', { clientY: 100, pointerId: 1 }));
+        handle.dispatchEvent(makeEvent('pointermove', { clientY: 150, pointerId: 1 }));
+        handle.dispatchEvent(makeEvent('pointerup', { pointerId: 1 }));
 
-        // Simulate mousemove on document (drag down 50px)
-        var mousemoveEvent = new MouseEvent('mousemove', { clientY: 150, bubbles: true });
-        document.dispatchEvent(mousemoveEvent);
-
-        // Simulate mouseup on document
-        var mouseupEvent = new MouseEvent('mouseup', { bubbles: true });
-        document.dispatchEvent(mouseupEvent);
-
-        // Height should have increased by ~50px
-        var newHeight = parseInt(panel.style.height, 10);
-        expect(newHeight).toBeGreaterThanOrEqual(initialHeight + 45);
-        expect(newHeight).toBeLessThanOrEqual(initialHeight + 55);
+        var newHeight = parseInt(host.style.height, 10);
+        expect(newHeight).toBe(initialHeight + 50);
       });
     });
   });
 
-  it('clamps minimum panel height to 300px', function () {
+  it('clamps minimum panel size to 320x360', function () {
     return GobyPanel.init().then(function () {
       return GobyPanel.show().then(function () {
         var host = document.getElementById('goby-panel-host');
         var sr = host.shadowRoot;
-        var panel = sr.querySelector('.goby-panel');
-        var handle = sr.querySelector('.goby-resize-handle');
-        expect(panel).not.toBeNull();
-        expect(handle).not.toBeNull();
+        var seHandle = sr.querySelector('.goby-resize-handle[data-dir="nw"]');
+        expect(seHandle).not.toBeNull();
 
-        // Set initial height
-        panel.style.height = '480px';
+        // 极限拖动 nw 角向右下，企图把面板缩小到极小
+        seHandle.dispatchEvent(makeEvent('pointerdown', { clientX: 100, clientY: 100, pointerId: 1 }));
+        seHandle.dispatchEvent(makeEvent('pointermove', { clientX: 2000, clientY: 2000, pointerId: 1 }));
+        seHandle.dispatchEvent(makeEvent('pointerup', { pointerId: 1 }));
 
-        // Simulate mousedown then extreme drag up (well past 300px)
-        handle.dispatchEvent(new MouseEvent('mousedown', { clientY: 500, bubbles: true }));
-        document.dispatchEvent(new MouseEvent('mousemove', { clientY: 50, bubbles: true }));
-        document.dispatchEvent(new MouseEvent('mouseup', { bubbles: true }));
-
-        var height = parseInt(panel.style.height, 10);
-        expect(height).toBeGreaterThanOrEqual(300);
+        expect(parseInt(host.style.width, 10)).toBeGreaterThanOrEqual(320);
+        expect(parseInt(host.style.height, 10)).toBeGreaterThanOrEqual(360);
       });
     });
   });
 
-  it('clamps maximum panel height to 700px', function () {
+  it('east handle decreases panel width (drag left) without moving left/top', function () {
     return GobyPanel.init().then(function () {
       return GobyPanel.show().then(function () {
         var host = document.getElementById('goby-panel-host');
         var sr = host.shadowRoot;
-        var panel = sr.querySelector('.goby-panel');
-        var handle = sr.querySelector('.goby-resize-handle');
-        expect(panel).not.toBeNull();
+        var handle = sr.querySelector('.goby-resize-handle[data-dir="e"]');
         expect(handle).not.toBeNull();
 
-        // Set initial height
-        panel.style.height = '480px';
+        var initialLeft = parseInt(host.style.left, 10);
+        var initialTop = parseInt(host.style.top, 10);
+        var initialWidth = parseInt(host.style.width, 10);
 
-        // Simulate mousedown then extreme drag down (well past 700px)
-        handle.dispatchEvent(new MouseEvent('mousedown', { clientY: 100, bubbles: true }));
-        document.dispatchEvent(new MouseEvent('mousemove', { clientY: 800, bubbles: true }));
-        document.dispatchEvent(new MouseEvent('mouseup', { bubbles: true }));
+        // 向左拖 50px：width 缩小，left/top 不变
+        handle.dispatchEvent(makeEvent('pointerdown', { clientX: 200, pointerId: 1 }));
+        handle.dispatchEvent(makeEvent('pointermove', { clientX: 150, pointerId: 1 }));
+        handle.dispatchEvent(makeEvent('pointerup', { pointerId: 1 }));
 
-        var height = parseInt(panel.style.height, 10);
-        expect(height).toBeLessThanOrEqual(700);
+        expect(parseInt(host.style.width, 10)).toBe(initialWidth - 50);
+        expect(parseInt(host.style.left, 10)).toBe(initialLeft);
+        expect(parseInt(host.style.top, 10)).toBe(initialTop);
       });
     });
   });
 
-  it('does not change panel width during resize (remains 400px)', function () {
+  it('west handle moves left edge: width decreases, left position changes', function () {
     return GobyPanel.init().then(function () {
       return GobyPanel.show().then(function () {
         var host = document.getElementById('goby-panel-host');
         var sr = host.shadowRoot;
-        var panel = sr.querySelector('.goby-panel');
-        var handle = sr.querySelector('.goby-resize-handle');
-        expect(panel).not.toBeNull();
+        var handle = sr.querySelector('.goby-resize-handle[data-dir="w"]');
         expect(handle).not.toBeNull();
 
-        panel.style.width = '400px';
-        panel.style.height = '480px';
+        var initialLeft = parseInt(host.style.left, 10);
+        var initialWidth = parseInt(host.style.width, 10);
 
-        // Resize
-        handle.dispatchEvent(new MouseEvent('mousedown', { clientY: 100, bubbles: true }));
-        document.dispatchEvent(new MouseEvent('mousemove', { clientY: 200, bubbles: true }));
-        document.dispatchEvent(new MouseEvent('mouseup', { bubbles: true }));
+        // 向右拖 50px：left+50，width-50
+        handle.dispatchEvent(makeEvent('pointerdown', { clientX: 500, pointerId: 1 }));
+        handle.dispatchEvent(makeEvent('pointermove', { clientX: 550, pointerId: 1 }));
+        handle.dispatchEvent(makeEvent('pointerup', { pointerId: 1 }));
 
-        expect(panel.style.width).toBe('400px');
+        expect(parseInt(host.style.left, 10)).toBe(initialLeft + 50);
+        expect(parseInt(host.style.width, 10)).toBe(initialWidth - 50);
       });
     });
   });
 
-  it('does not allow horizontal panel movement (position stays bottom-right)', function () {
+  it('persists geometry to chrome.storage.local after resize', function () {
     return GobyPanel.init().then(function () {
       return GobyPanel.show().then(function () {
         var host = document.getElementById('goby-panel-host');
         var sr = host.shadowRoot;
-        var panel = sr.querySelector('.goby-panel');
-        var handle = sr.querySelector('.goby-resize-handle');
-        expect(panel).not.toBeNull();
-        expect(handle).not.toBeNull();
+        var handle = sr.querySelector('.goby-resize-handle[data-dir="s"]');
 
-        panel.style.height = '480px';
+        handle.dispatchEvent(makeEvent('pointerdown', { clientY: 100, pointerId: 1 }));
+        handle.dispatchEvent(makeEvent('pointermove', { clientY: 200, pointerId: 1 }));
+        handle.dispatchEvent(makeEvent('pointerup', { pointerId: 1 }));
 
-        // Check initial position
-        expect(host.style.right).toBe('20px');
-        expect(host.style.bottom).toBe('80px');
-
-        // Resize should not change position
-        handle.dispatchEvent(new MouseEvent('mousedown', { clientY: 100, bubbles: true }));
-        document.dispatchEvent(new MouseEvent('mousemove', { clientY: 200, bubbles: true }));
-        document.dispatchEvent(new MouseEvent('mouseup', { bubbles: true }));
-
-        expect(host.style.right).toBe('20px');
-        expect(host.style.bottom).toBe('80px');
+        return chrome.storage.local.get(['gobyPanelGeometry']).then(function (result) {
+          var g = result && result.gobyPanelGeometry;
+          expect(g).toBeDefined();
+          expect(typeof g.left).toBe('number');
+          expect(typeof g.top).toBe('number');
+          expect(typeof g.w).toBe('number');
+          expect(typeof g.h).toBe('number');
+          expect(g.h).toBeGreaterThanOrEqual(580); // 480 + 100
+        });
       });
+    });
+  });
+});
+
+// ============================================================
+//  Describe: Floating Ball Drag
+//  Quick 260627-hae — 悬浮球任意拖拽，5px 阈值区分 click/drag
+// ============================================================
+
+describe('Floating Ball Drag', function () {
+  beforeEach(function () {
+    chrome.storage.local._reset();
+    jest.clearAllMocks();
+    ['.goby-floating-ball', '.goby-panel-container', '#goby-panel-host']
+      .forEach(function (sel) {
+        var list = document.querySelectorAll(sel);
+        list.forEach(function (el) {
+          if (el && el.parentNode) el.parentNode.removeChild(el);
+        });
+      });
+  });
+
+  function makeEvent(type, props) {
+    var EvCtor = typeof PointerEvent !== 'undefined' ? PointerEvent : MouseEvent;
+    try {
+      return new EvCtor(type, Object.assign({ bubbles: true }, props));
+    } catch (e) {
+      return new MouseEvent(type, Object.assign({ bubbles: true }, props));
+    }
+  }
+
+  it('ball can be dragged to a new position; position persists', function () {
+    return GobyPanel.init().then(function () {
+      var ball = document.querySelector('.goby-floating-ball');
+      var initialLeft = parseInt(ball.style.left, 10);
+      var initialTop = parseInt(ball.style.top, 10);
+
+      // 往左上拖 50/30，避免触发视口边界 clamp
+      ball.dispatchEvent(makeEvent('pointerdown', { clientX: initialLeft + 22, clientY: initialTop + 22, pointerId: 1 }));
+      ball.dispatchEvent(makeEvent('pointermove', { clientX: initialLeft + 22 - 50, clientY: initialTop + 22 - 30, pointerId: 1 }));
+      ball.dispatchEvent(makeEvent('pointerup', { pointerId: 1 }));
+
+      expect(parseInt(ball.style.left, 10)).toBe(initialLeft - 50);
+      expect(parseInt(ball.style.top, 10)).toBe(initialTop - 30);
+
+      return chrome.storage.local.get(['gobyBallPosition']).then(function (result) {
+        var pos = result && result.gobyBallPosition;
+        expect(pos).toBeDefined();
+        expect(pos.x).toBe(initialLeft - 50);
+        expect(pos.y).toBe(initialTop - 30);
+      });
+    });
+  });
+
+  it('sub-threshold movement (<5px) does not suppress click toggle', function () {
+    return GobyPanel.init().then(function () {
+      var ball = document.querySelector('.goby-floating-ball');
+      var initialLeft = parseInt(ball.style.left, 10);
+      var initialTop = parseInt(ball.style.top, 10);
+
+      // 微小移动 < 5px 阈值，仍视为 click
+      ball.dispatchEvent(makeEvent('pointerdown', { clientX: 0, clientY: 0, pointerId: 1 }));
+      ball.dispatchEvent(makeEvent('pointermove', { clientX: 2, clientY: 3, pointerId: 1 }));
+      ball.dispatchEvent(makeEvent('pointerup', { pointerId: 1 }));
+
+      // 位置不变
+      expect(parseInt(ball.style.left, 10)).toBe(initialLeft);
+      expect(parseInt(ball.style.top, 10)).toBe(initialTop);
+
+      // click 应该 toggle 面板
+      ball.click();
+      expect(GobyPanel.getState().isVisible).toBe(true);
     });
   });
 });
