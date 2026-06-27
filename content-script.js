@@ -2665,47 +2665,6 @@
         });
       }
     },
-    // ---- Phase 11: page_markdown — Readability 正文提取转 Markdown ----
-    {
-      type: 'function',
-      function: {
-        name: 'page_markdown',
-        description: 'Extract the main article content of the current page and convert it to clean Markdown. Removes navigation, ads, sidebars, and other clutter. Returns {title, content(markdown), excerpt, byline, length}. Use this for reading articles, blog posts, documentation, and any text-heavy pages. Much cleaner and more token-efficient than page_evaluate for content extraction.',
-        parameters: {
-          type: 'object',
-          properties: {}
-        }
-      },
-      timeout: 15000,
-      execute: function () {
-        try {
-          if (typeof self.Readability !== 'function') {
-            return 'Error: Readability 未加载';
-          }
-          // 必须 clone DOM（parse 会修改原始 DOM）
-          var clone = document.cloneNode(true);
-          var article = new self.Readability(clone).parse();
-          if (!article) {
-            return '提示: 未能从当前页面提取到文章内容。';
-          }
-          // 提取的正文 HTML → Markdown
-          var markdown = window.marked.parse(article.content, { gfm: true });
-          // DOMPurify 消毒（content HTML 虽来自 DOM，消毒保平安）
-          // DOMPurify 的 sanitize 不是必需的，但 Goby 安全规则要求所有 LLM 内容过 purify
-          // 这里不过 purify（原文非 LLM 生成），但转 markdown 后的输出一定会过 purify 管道
-          var result = {
-            title: article.title || '',
-            content: markdown,
-            excerpt: article.excerpt || '',
-            byline: article.byline || '',
-            length: article.length || 0
-          };
-          return JSON.stringify(result, null, 2);
-        } catch (e) {
-          return 'Error: page_markdown 提取失败 - ' + (e.message || '未知错误');
-        }
-      }
-    },
     // Phase 3 实现的辅助工具
     {
       type: 'function',
