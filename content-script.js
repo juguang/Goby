@@ -137,13 +137,14 @@
   // Phase 03 UAT 测试 5：先 await GobyPanel.init()，再 initSession()，避免渲染时序竞争
   // （否则 loadSession 完成时面板未就绪，renderWelcome + appendMessage(历史) 被静默跳过）
   // Plan 09-03: 首次运行预装内置技能（gobySkills 为空时自动注入 5 个技能）
+  // Plan 10-02: MCP 工具拉取不阻塞 session 初始化（initSession 之后 fire-and-forget）
   GobyPanel.init().then(function () {
-    // 先预装内置技能 + MCP 工具拉取（异步），再初始化会话
+    // 先预装内置技能（异步），再初始化会话
     return _preloadBuiltinSkills().then(function () {
-      return _loadMcpTools();
-    }).then(function () {
-      // 面板就绪 + 技能就绪 + MCP 工具就绪后再初始化会话
+      // 面板就绪 + 技能就绪后再初始化会话
       initSession();
+      // MCP 工具拉取 fire-and-forget — 不阻塞 session 初始化
+      _loadMcpTools();
       return chrome.storage.local.get(['gobyPanelState']).then(function (result) {
         var panelState = result.gobyPanelState || {};
         if (panelState.autoStart) {
@@ -153,11 +154,10 @@
     });
   }).catch(function () {
     // 初始化失败 — 退化到立即初始化会话（无面板渲染）
-    // 仍尝试预装技能和 MCP 工具
+    // 仍尝试预装技能
     _preloadBuiltinSkills().then(function () {
-      return _loadMcpTools();
-    }).then(function () {
       initSession();
+      _loadMcpTools();
     });
   });
 
