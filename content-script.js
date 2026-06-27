@@ -3714,6 +3714,30 @@
       }
     }
 
+    // MCP 工具路由（Plan 10-02, D-05/D-09）
+    // mcp__ 前缀不可能跟 native/skill 工具名冲突，优先检查
+    var toolName = toolCall.function.name;
+    if (toolName.indexOf('mcp__') === 0) {
+      var meta = _mcpToolMeta[toolName];
+      if (!meta) {
+        return 'MCP 工具元数据丢失: ' + toolName + '。请重新加载面板。';
+      }
+      return sendToSW('mcp-call-tool', {
+        action: 'mcp-call-tool',
+        serverId: meta.serverId,
+        endpoint: meta.endpoint,
+        token: meta.token,
+        toolName: meta.rawToolName,
+        args: args
+      }).then(function (response) {
+        if (response && response.ok) {
+          return response.result || '(无返回结果)';
+        }
+        // D-09: 错误以工具结果字符串显示
+        return 'MCP 工具调用失败: ' + ((response && response.error) || '未知错误');
+      });
+    }
+
     // 在 nativeTools、已注册技能工具和 MCP 工具中查找匹配的工具
     var toolDef = nativeTools.find(function (t) {
       return t.function.name === toolCall.function.name;
