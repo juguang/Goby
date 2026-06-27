@@ -1188,6 +1188,56 @@
     }
 
     /**
+     * 弹出 MCP server 的工具列表详情
+     */
+    function showMcpToolsPopup(serverId, toolNames) {
+      var popup = document.createElement('div');
+      popup.className = 'goby-mcp-tools-popup';
+      popup.style.cssText = 'position:absolute;left:0;right:0;top:0;bottom:0;background:rgba(0,0,0,0.4);z-index:1000;display:flex;align-items:center;justify-content:center;';
+
+      var box = document.createElement('div');
+      box.style.cssText = 'background:#fff;border-radius:8px;padding:16px;max-width:500px;width:90%;max-height:70vh;overflow-y:auto;box-shadow:0 4px 20px rgba(0,0,0,0.25);';
+
+      var header = document.createElement('div');
+      header.style.cssText = 'display:flex;justify-content:space-between;align-items:center;margin-bottom:12px;';
+
+      var title = document.createElement('span');
+      title.style.cssText = 'font-size:14px;font-weight:600;color:#111827;';
+      title.textContent = t('modal.mcp_title') + ' — ' + t('modal.mcp_tool_count', { n: toolNames.length });
+
+      var closeX = document.createElement('button');
+      closeX.textContent = '×';
+      closeX.style.cssText = 'border:none;background:none;font-size:20px;cursor:pointer;padding:0 4px;color:#6b7280;';
+
+      header.appendChild(title);
+      header.appendChild(closeX);
+      box.appendChild(header);
+
+      var list = document.createElement('div');
+      toolNames.forEach(function (name, i) {
+        var row = document.createElement('div');
+        row.style.cssText = 'padding:6px 8px;font-size:12px;color:#374151;border-bottom:' + (i < toolNames.length - 1 ? '1px solid #f3f4f6' : 'none') + ';';
+        row.textContent = (i + 1) + '. ' + name;
+        list.appendChild(row);
+      });
+      box.appendChild(list);
+
+      popup.appendChild(box);
+
+      // 关闭事件
+      function closePopup() { if (popup.parentNode) popup.remove(); }
+      closeX.addEventListener('click', closePopup);
+      popup.addEventListener('click', function (e) { if (e.target === popup) closePopup(); });
+
+      // 挂载到 MCP 区域最近的定位祖先
+      var mcpSection = document.querySelector('.goby-mcp-section');
+      if (mcpSection) {
+        mcpSection.style.position = 'relative';
+        mcpSection.appendChild(popup);
+      }
+    }
+
+    /**
      * 刷新 MCP server 列表
      */
     function refreshMcpList() {
@@ -1225,10 +1275,12 @@
               var isOk = response && response.ok;
               var toolCount = (response && Array.isArray(response.tools)) ? response.tools.length : 0;
               var errMsg = (!isOk && response && response.error) ? response.error : '';
+              var toolNames = (response && Array.isArray(response.tools)) ? response.tools.map(function (t) { return t.name; }) : [];
               _mcpServerStatuses[id] = {
                 status: isOk ? 'connected' : 'failed',
                 toolCount: toolCount,
-                error: errMsg
+                error: errMsg,
+                toolNames: toolNames
               };
               // 如果面板还在 DOM 中，刷新状态显示
               if (document.querySelector('.goby-modal')) {
@@ -1241,11 +1293,19 @@
         for (var i = 0; i < serverIds.length; i++) {
           var id = serverIds[i];
           var server = servers[id];
-          // 从状态缓存附加连接状态、工具数和错误信息
+          // 从缓存附加连接状态、工具数、错误信息和工具名
           if (_mcpServerStatuses[id]) {
             server._connectionStatus = _mcpServerStatuses[id].status;
             server._toolCount = _mcpServerStatuses[id].toolCount;
             server._error = _mcpServerStatuses[id].error;
+            // 从 _mcpToolMeta（IIFE 级）提取工具名列表
+            var names = [];
+            for (var mk in _mcpToolMeta) {
+              if (_mcpToolMeta[mk].serverId === id) {
+                names.push(_mcpToolMeta[mk].rawToolName);
+              }
+            }
+            server._toolNames = names.length > 0 ? names : _mcpServerStatuses[id].toolNames;
           } else {
             server._connectionStatus = 'untested';
           }
@@ -1332,6 +1392,22 @@
       // Actions 组
       var actions = document.createElement('div');
       actions.className = 'goby-mcp-server-actions';
+
+      // 查看工具按钮 — 仅连接成功且有工具时显示
+      var viewToolsBtn = document.createElement('button');
+      viewToolsBtn.textContent = '查看工具';
+      viewToolsBtn.style.cursor = 'pointer';
+      viewToolsBtn.style.marginRight = '8px';
+      if (server._connectionStatus === 'connected' && server._toolNames && server._toolNames.length > 0) {
+        viewToolsBtn.addEventListener('click', function (sid, names) {
+          return function () {
+            showMcpToolsPopup(sid, names);
+          };
+        }(id, server._toolNames));
+      } else {
+        viewToolsBtn.style.display = 'none';
+      }
+      actions.appendChild(viewToolsBtn);
 
       var editBtn = document.createElement('button');
       editBtn.textContent = '编辑';
@@ -1605,12 +1681,14 @@
               var isOk = response && response.ok;
               var toolCount = (response && Array.isArray(response.tools)) ? response.tools.length : 0;
               var errMsg = (!isOk && response && response.error) ? response.error : '';
+              var toolNames = (response && Array.isArray(response.tools)) ? response.tools.map(function (t) { return t.name; }) : [];
 
               // 更新状态缓存
               _mcpServerStatuses[serverId] = {
                 status: isOk ? 'connected' : 'failed',
                 toolCount: toolCount,
-                error: errMsg
+                error: errMsg,
+                toolNames: toolNames
               };
 
               // 移除表单
