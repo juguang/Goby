@@ -2,6 +2,32 @@
 
 ---
 
+## v0.3.4 — 2026-06-27
+
+### 🇺🇸 English
+
+**MCP Client — Goby can now call external MCP servers. Connect Tavily, GitHub, Supabase and more.**
+
+- **MCP tools integration** — Goby agent loop now loads tools from configured Streamable HTTP MCP servers and presents them alongside native tools. Tool names use `mcp__{serverName}__{toolName}` convention, sorted after native tools.
+- **Settings panel UI** — New "MCP Servers" tab in the settings panel. Add/edit/delete server configurations (name, endpoint URL, Bearer token). Server-level enabled/disabled toggle. Auto-connection verification on save with status display (connected/failed/untested).
+- **Vanilla JS MCP client** — 200-line `lib/mcp-client.js` implements Streamable HTTP transport (JSON-RPC 2.0 over HTTP/SSE). No SDK dependency, 15s timeout, Bearer token auth.
+- **Service worker integration** — `importScripts('lib/mcp-client.js')` loads the MCP client in the SW. Two new SW handlers (`mcp-list-tools`, `mcp-call-tool`) follow the existing message routing pattern.
+- **Backed by research** — Spike 03 PoC verified against real Cloudflare MCP server. Scope: Streamable HTTP only. No stdio (MV3 limitation), no OAuth, no Resources/Prompts.
+- **62 new tests** covering MCP HTTP client, storage CRUD, SW handlers, CS integration, and UI. All passing.
+
+### 🇨🇳 中文
+
+**MCP Client —— Goby 现在能调外部 MCP server 了。连接 Tavily、GitHub、Supabase。**
+
+- **MCP 工具集成** —— Goby agent 循环从配置的 Streamable HTTP MCP server 加载工具，与内置工具合并展现。命名格式 `mcp__{serverName}__{toolName}`，排在原生工具之后。
+- **设置面板 UI** —— 新增「MCP Servers」标签页。添加/编辑/删除 server 配置（名称、endpoint URL、Bearer token）。Server 级启用/禁用开关。保存时自动验证连接并显示状态（已连接/连接失败/未验证）。
+- **Vanilla JS MCP 客户端** —— 200 行 `lib/mcp-client.js` 实现 Streamable HTTP 传输（JSON-RPC 2.0 over HTTP/SSE）。无 SDK 依赖，15s 超时，Bearer token 认证。
+- **Service Worker 集成** —— `importScripts('lib/mcp-client.js')` 在 SW 中加载 MCP 客户端。新增 2 个 SW handler（`mcp-list-tools`、`mcp-call-tool`）遵循现有消息路由模式。
+- **有研究支撑** —— Spike 03 PoC 验证通过真实 Cloudflare MCP server。范围：仅 Streamable HTTP。不做 stdio（MV3 限制）、不做 OAuth、不做 Resources/Prompts。
+- **62 个新测试**覆盖 MCP HTTP 客户端、storage CRUD、SW handler、CS 集成和 UI。全部通过。
+
+---
+
 ## v0.3.3 — 2026-06-27
 
 ### 🇺🇸 English
