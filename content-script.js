@@ -2682,10 +2682,6 @@
           if (typeof self.Readability !== 'function') {
             return 'Error: Readability 未加载';
           }
-          // 先快速判断是否可读
-          if (typeof self.isProbablyReaderable === 'function' && !self.isProbablyReaderable(document)) {
-            return '提示: Readability 判定当前页面无可读文章内容（可能是搜索结果页/列表页/空白页），建议用 page_query 或 page_analyze 替代。但将继续提取...';
-          }
           // 必须 clone DOM（parse 会修改原始 DOM）
           var clone = document.cloneNode(true);
           var article = new self.Readability(clone).parse();
@@ -4737,6 +4733,10 @@
         // Phase 8 fix: await saveSession() 确保 interrupted=true 写入 storage 后才 break。
         //   之前不 await，导航期间 CS 可能被杀，storage 写入来不及 → 新页面读不到
         //   interrupted → 不 resume。SW 侧也有标记（tab-navigate handler），双保险。
+        // Phase 11 fix: page_click 触发 navigation 也设 navigatedByAgent，让回退后能自动恢复
+        if (navStarted) {
+          _agentState.navigatedByAgent = true;
+        }
         await window.GobyAgent.saveSession();
 
         if (navStarted) {
