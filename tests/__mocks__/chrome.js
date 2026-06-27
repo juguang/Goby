@@ -1,6 +1,22 @@
 // Chrome API mock for Jest testing
 // Mock chrome.storage.local with an in-memory store
 
+// importScripts polyfill for Service Worker tests in jsdom
+// background.js uses importScripts('lib/mcp-client.js') to load McpHttpClient
+if (typeof globalThis.importScripts !== 'function') {
+  globalThis.importScripts = function () {
+    // 在 test 环境下，lib/mcp-client.js 已通过 require 加载
+    // importScripts 只需确保 self.McpHttpClient 可用即可
+    if (typeof self.McpHttpClient !== 'function') {
+      try {
+        require('../../lib/mcp-client.js');
+      } catch (e) {
+        // 可能已在别处加载，静默跳过
+      }
+    }
+  };
+}
+
 var chromeMockData = {};
 
 global.chrome = {

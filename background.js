@@ -10,6 +10,9 @@
 //   T-03-02: 验证 sender.id === chrome.runtime.id
 //   T-03-05: API Key 从 chrome.storage.local 读取，不硬编码
 
+// Plan 10-01: 加载 MCP HTTP 客户端库到 SW 环境
+importScripts('lib/mcp-client.js');
+
 (function () {
   'use strict';
 
