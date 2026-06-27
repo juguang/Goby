@@ -741,6 +741,14 @@
   color: #6b7280;
 }
 
+.goby-mcp-status-verifying {
+  color: #d97706;
+}
+
+.goby-mcp-status-disabled {
+  color: #9ca3af;
+}
+
 .goby-mcp-no-servers {
   font-size: 12px;
   color: #6b7280;

@@ -1205,6 +1205,37 @@
         }
 
         mcpNoServersEl.style.display = 'none';
+
+        // 对每台状态未知的 server 异步触发连接验证
+        serverIds.forEach(function (id) {
+          if (!_mcpServerStatuses[id]) {
+            var server = servers[id];
+            if (!server.enabled) {
+              _mcpServerStatuses[id] = { status: 'disabled', toolCount: 0 };
+              return;
+            }
+            // 标记为验证中，异步发请求
+            _mcpServerStatuses[id] = { status: 'verifying', toolCount: 0 };
+            sendToSW('mcp-verify', {
+              action: 'mcp-list-tools',
+              serverId: server.id,
+              endpoint: server.endpoint,
+              token: server.token || ''
+            }).then(function (response) {
+              var isOk = response && response.ok;
+              var toolCount = (response && Array.isArray(response.tools)) ? response.tools.length : 0;
+              _mcpServerStatuses[id] = {
+                status: isOk ? 'connected' : 'failed',
+                toolCount: toolCount
+              };
+              // 如果面板还在 DOM 中，刷新状态显示
+              if (document.querySelector('.goby-modal')) {
+                refreshMcpList();
+              }
+            });
+          }
+        });
+
         for (var i = 0; i < serverIds.length; i++) {
           var id = serverIds[i];
           var server = servers[id];
