@@ -3154,14 +3154,15 @@
   var toolListLines = _buildToolListLines();
 
   /**
-   * getSystemPrompt — 返回完整系统提示词（当前语言的 base + 工具列表）
+   * getSystemPrompt — 返回系统提示词（base 行为规则，工具 schema 通过 API tools 参数传，不进 prompt 文本）
+   * 借鉴 Claude Code / OpenClaw：工具定义走 tools 参数，prompt 只放行为纪律，省 token + 命中 prompt cache
    * @returns {string}
    */
   function getSystemPrompt() {
     var basePrompt = (window.GobyI18n && window.GobyI18n.getSystemPrompt)
       ? window.GobyI18n.getSystemPrompt()
       : '';
-    return basePrompt + _buildToolListLines() + '\n';
+    return basePrompt + '\n';
   }
 
   /**

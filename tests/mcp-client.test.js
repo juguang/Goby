@@ -1057,7 +1057,7 @@ describe('CS Integration (Plan 10-02)', function () {
   //  4b. 工具列表合并（Task 2）
   // -----------------------------------------------------------
 
-  it('工具列表合并 - _buildToolListLines 包含 mcp__ 工具', async function () {
+  it('getSystemPrompt 移除工具列表（工具改走 API tools 参数）', async function () {
     // 手动注入 MCP 工具
     window.__gobyInternals._activeMcpTools.push({
       type: 'function',
@@ -1068,10 +1068,11 @@ describe('CS Integration (Plan 10-02)', function () {
       function: { name: 'mcp__Test__get', description: 'Test get', parameters: {} }
     });
 
-    // 调用 _buildToolListLines — 通过 GobyAgent.getSystemPrompt 间接测试
+    // 新设计（借鉴 Claude Code/OpenClaw）：工具 schema 通过 API tools 参数传，不进 system prompt 文本
     var prompt = window.GobyAgent.getSystemPrompt();
-    expect(prompt).toContain('- mcp__Test__search: Test search');
-    expect(prompt).toContain('- mcp__Test__get: Test get');
+    expect(prompt).not.toContain('mcp__Test__search');
+    expect(prompt).not.toContain('可用工具：');
+    // 工具合并的正确性由下一个测试（callLLMStream tools 参数）覆盖
   });
 
   it('工具列表合并 - callLLMStream tools 包含 mcp__ 工具', async function () {
