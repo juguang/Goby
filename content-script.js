@@ -781,6 +781,11 @@
           refreshRecommendedList();
           importRow.style.display = 'none';
           importInput.value = '';
+          // 如果新技能匹配当前 hostname，立即注册到当前会话工具列表
+          // （否则要刷新页面才会生效）
+          if (window.GobyAgent && typeof window.GobyAgent._refreshActiveSkills === 'function') {
+            window.GobyAgent._refreshActiveSkills();
+          }
         }).catch(function (e) {
           showSkillFeedback('保存失败: ' + (e.message || String(e)), 'error');
         });
@@ -816,6 +821,10 @@
           importInput.value = '';
           refreshSkillsList();
           refreshRecommendedList();
+          // 如果新技能匹配当前 hostname，立即注册到当前会话工具列表
+          if (window.GobyAgent && typeof window.GobyAgent._refreshActiveSkills === 'function') {
+            window.GobyAgent._refreshActiveSkills();
+          }
         } else {
           var errMsg = result && result.error ? result.error : (t('modal.skills_import_failed') || '导入失败');
           showSkillFeedback(errMsg, 'error');
@@ -1237,6 +1246,7 @@
     '3. 工具失败 — 尝试替代方案（不同选择器、不同方法），连续3次失败则跳过\n' +
     '4. 及时停止 — 获取足够信息回答用户后，立即停止调用工具，直接给出答案\n' +
     '5. 言出必行 — 提到要执行的动作时必须立即发出对应工具调用。禁止声称要做却不调用工具（例如：不要说"让我截个图看看"却不发 page_screenshot；不要说"我去打开 b.com"却不发 page_open_tab；不要说"我点一下搜索按钮"却不发 page_click）。要么直接调用工具，要么不提。调 page_open_tab 时必须填 task 参数（一句话写清新 Tab 要做什么，例如「搜索 web agent 并总结最重要的页面」），否则新 Tab 的 AI 不知道任务。如果你是 worker Tab（看到「[Workflow wf_xxx] 你是 worker Tab」的 user message），你的普通文本回复不会显示给用户——page_finish_workflow(summary) 是你唯一与用户通信的渠道，summary 写你想告诉用户的完整结果——不调会导致 chat Tab 永久卡死。\n' +
+    '6. 工具失败立即换路径 — 如果某个技能工具或 page_evaluate 返回「执行失败」「timeout」「CSP」等错误（通常由于页面 CSP 限制动态脚本执行），不要重试同一工具，立即改用 page_query / page_list_elements / page_click / page_fill 等内置工具组合完成任务。例如 HN 等严格 CSP 站点不支持技能代码执行，但内置工具查询 DOM 不受影响。\n' +
     '调用工具前可以用一句话简要说明意图（如"我需要先查看页面结构"），但这句话必须紧跟工具调用，不能只有话没有工具。任务完成后用一两句总结你做了什么。如果无法完成，说清楚原因和建议。\n\n';
 
   /**
@@ -1302,19 +1312,41 @@
   }
 
   // ---- 15 个工具定义 (GOBY_DESIGN.md §四) ----
+
+  /**
+   * _stringifyEvalResult — 把 page_evaluate 的执行结果序列化为字符串
+   * 元素节点 → outerHTML 截断；其他 → JSON.stringify；undefined → 'undefined'
+   */
+  function _stringifyEvalResult(result) {
+    if (result === undefined) return 'undefined';
+    if (result === null) return 'null';
+    if (typeof result === 'string') return result;
+    if (typeof result === 'number' || typeof result === 'boolean') return String(result);
+    if (result && result.nodeType === 1 /* Node.ELEMENT_NODE */) {
+      var html = result.outerHTML || '';
+      if (html.length > 2000) html = html.substring(0, 2000) + '...';
+      return html;
+    }
+    try {
+      return JSON.stringify(result);
+    } catch (e) {
+      return String(result);
+    }
+  }
+
   var nativeTools = [
     // 页面查询工具
     {
       type: 'function',
       function: {
         name: 'page_query',
-        description: '使用 CSS 选择器查询页面元素的内容（text/value/html/attributes/all）',
+        description: '使用 CSS 选择器查询页面元素的内容（text/value/html/attributes/all）。重要：要批量获取同类元素（如列表项、表格行、所有标题）时，传 index=-1 一次拿全部，不要多次调用按索引逐个查。例：page_query({selector:".titleline", index:-1}) 返回所有标题；page_query({selector:".score", index:-1, property:"text"}) 返回所有分数。',
         parameters: {
           type: 'object',
           properties: {
             selector: { type: 'string', description: 'CSS 选择器' },
             property: { type: 'string', description: '要提取的属性: text/value/html/attributes/all', default: 'text' },
-            index: { type: 'number', description: '匹配元素的索引', default: 0 }
+            index: { type: 'number', description: '匹配元素的索引。-1 表示返回所有匹配元素组成的数组（推荐用于批量查询）；0（默认）返回第一个；N 返回第 N 个', default: 0 }
           },
           required: ['selector']
         }
@@ -1541,19 +1573,29 @@
           return 'Error: expression is required';
         }
 
-        // D-26 / T-04-01: expression 通过 args 序列化传递，不拼接 eval
-        // 通过 Service Worker 在 MAIN world 执行
+        // 通过 SW 的 page-evaluate 通道在 MAIN world 执行（受 page CSP 限制）
+        // 严格 CSP 站点（如 HN）会拒绝 eval，返回明确的失败信息让 LLM 换工具
         return new Promise(function (resolve) {
-          chrome.runtime.sendMessage(
-            { action: 'page-evaluate', expression: args.expression },
-            function (response) {
-              if (chrome.runtime.lastError) {
-                resolve('Error: page_evaluate failed - ' + chrome.runtime.lastError.message);
-              } else {
-                resolve(String(response));
+          try {
+            chrome.runtime.sendMessage(
+              { action: 'page-evaluate', expression: args.expression },
+              function (resp) {
+                if (chrome.runtime.lastError || resp === undefined || resp === null) {
+                  resolve('page_evaluate 执行失败: SW 通信错误');
+                  return;
+                }
+                if (typeof resp === 'string' && resp.indexOf('Error:') === 0) {
+                  // SW 返回的错误信息——转成中性前缀避免 executeWithTimeout 重试循环
+                  resolve('page_evaluate 执行失败: ' + resp.slice('Error:'.length).trim() +
+                          ' — 请改用 page_query 或 page_list_elements');
+                  return;
+                }
+                resolve(_stringifyEvalResult(resp));
               }
-            }
-          );
+            );
+          } catch (e) {
+            resolve('page_evaluate 执行失败: ' + (e.message || e));
+          }
         });
       }
     },
@@ -3213,13 +3255,23 @@
     }
 
     // 步骤 3: 写入 storage（委托 SW）
+    // 注意：剥离 action.execute 函数对象——结构化克隆会丢弃函数，
+    // 显式剥离避免序列化异常；运行时 registerSkillTools 会用 new Function 编译 rawCode
+    var serializableActions = validation.skillManifest.actions.map(function (a) {
+      return {
+        name: a.name,
+        description: a.description || '',
+        inputSchema: a.inputSchema || {},
+        rawCode: a.rawCode || ''
+      };
+    });
     return sendToSW('skill-store', {
       action: 'skill-store',
       skillManifest: {
         name: validation.skillManifest.name,
         description: validation.skillManifest.description,
         domain: validation.skillManifest.domain,
-        actions: validation.skillManifest.actions,
+        actions: serializableActions,
         source: sourceUrl
       }
     }).then(function (storeResponse) {
@@ -3392,9 +3444,25 @@
         if (!action.name) continue;
         if (!action.rawCode && !action.execute) continue;
 
-        // 优先用预编译 execute 函数，否则通过 page_evaluate SW 通道执行
         var actionName = action.name;
-        var hasPrecompiled = action.execute && typeof action.execute === 'function';
+        // 优先用预编译 execute 函数（仅内置技能有，跳过编译）
+        // 否则在 content script ISOLATED world 用 new Function 编译 rawCode
+        // 注意：严格 CSP 站点（如 HN）的 page CSP 会拒绝 new Function/eval，
+        // 此时 skill 会失败——返回明确的错误信息让 LLM 改用 page_query 等内置工具。
+        // 这是浏览器安全模型的硬性限制，业界（alibaba/page-agent）也接受同样限制。
+        var compiledFn = null;
+        if (action.execute && typeof action.execute === 'function') {
+          compiledFn = action.execute;
+        } else if (action.rawCode && typeof action.rawCode === 'string') {
+          try {
+            compiledFn = new Function('return (' + action.rawCode + ')')();
+          } catch (e) {
+            console.warn('[skill] compile failed for ' + actionName + ': ' + (e.message || e));
+            continue;
+          }
+        }
+        if (!compiledFn || typeof compiledFn !== 'function') continue;
+
         // 兼容 browsing-skills 的 inputSchema 格式（可能缺少顶层 type:"object"）
         var schema = action.inputSchema || {};
         if (!schema.type) {
@@ -3408,64 +3476,54 @@
             parameters: schema
           },
           timeout: 30000,
-          execute: function (params) {
-            // 导航检测——skill 可能触发表单提交导致页面跳转
-            var navigated = false;
-            var onNav = function () { navigated = true; };
-            window.addEventListener('beforeunload', onNav);
-            window.addEventListener('pagehide', onNav);
+          execute: (function (fn, name) {
+            return function (params) {
+              // 导航检测——skill 可能触发表单提交导致页面跳转
+              var navigated = false;
+              var onNav = function () { navigated = true; };
+              window.addEventListener('beforeunload', onNav);
+              window.addEventListener('pagehide', onNav);
 
-            function formatResult(result, isError) {
-              window.removeEventListener('beforeunload', onNav);
-              window.removeEventListener('pagehide', onNav);
-              var text;
-              if (result && Array.isArray(result.content)) {
-                var texts = [];
-                for (var ci = 0; ci < result.content.length; ci++) {
-                  if (result.content[ci] && typeof result.content[ci].text === 'string') texts.push(result.content[ci].text);
+              function formatResult(result, isError) {
+                window.removeEventListener('beforeunload', onNav);
+                window.removeEventListener('pagehide', onNav);
+                var text;
+                if (result && Array.isArray(result.content)) {
+                  var texts = [];
+                  for (var ci = 0; ci < result.content.length; ci++) {
+                    if (result.content[ci] && typeof result.content[ci].text === 'string') texts.push(result.content[ci].text);
+                  }
+                  text = texts.length === 1 ? texts[0] : JSON.stringify(texts.length > 0 ? texts : result);
+                } else if (typeof result === 'string') {
+                  text = result;
+                } else {
+                  text = JSON.stringify(result);
                 }
-                text = texts.length === 1 ? texts[0] : JSON.stringify(texts.length > 0 ? texts : result);
-              } else if (typeof result === 'string') {
-                text = result;
-              } else {
-                text = JSON.stringify(result);
+                // 失败时用中性前缀（不带 "Error:"），避免 executeWithTimeout 误判重试 3 次
+                // 然后跳过工具，让 LLM 看不到真正的错误
+                if (isError) text = name + ' 执行失败: ' + (isError.message || isError) +
+                  ' — 如果是 CSP 错误，请改用 page_query / page_list_elements / page_click 等内置工具';
+                if (navigated && text.indexOf('Error:') !== 0) {
+                  text += ' (navigation started, agent loop will pause until new page loads)';
+                }
+                return text;
               }
-              if (isError) text = 'Error: ' + actionName + ' 失败 - ' + (isError.message || isError);
-              if (navigated && text.indexOf('Error:') !== 0) {
-                text += ' (navigation started, agent loop will pause until new page loads)';
-              }
-              return text;
-            }
 
-            // 预编译函数直接执行
-            if (hasPrecompiled) {
               try {
-                return formatResult(action.execute(params));
+                var ret = fn(params);
+                // 支持 skill 返回 Promise（异步 action）
+                if (ret && typeof ret.then === 'function') {
+                  return new Promise(function (resolve) {
+                    ret.then(function (r) { resolve(formatResult(r)); },
+                             function (err) { resolve(formatResult(null, err)); });
+                  });
+                }
+                return formatResult(ret);
               } catch (e) {
                 return formatResult(null, e);
               }
-            }
-            // rawCode 通过 page_evaluate SW 通道执行（绕过页面 CSP）
-            return new Promise(function (resolve) {
-              var expr = 'JSON.stringify((function(){' +
-                'var _skillFn = ' + action.rawCode + ';' +
-                'var _params = ' + JSON.stringify(params || {}) + ';' +
-                'var _result = _skillFn(_params);' +
-                'return _result;' +
-              '})())';
-              chrome.runtime.sendMessage({ action: 'page-evaluate', expression: expr }, function (response) {
-                if (chrome.runtime.lastError) {
-                  resolve(formatResult(null, chrome.runtime.lastError));
-                  return;
-                }
-                try {
-                  resolve(formatResult(JSON.parse(String(response))));
-                } catch (e) {
-                  resolve(formatResult(String(response)));
-                }
-              });
-            });
-          }
+            };
+          })(compiledFn, actionName)
         };
 
         _activeSkillTools.push(toolDef);
@@ -4106,6 +4164,11 @@
     },
     registerSkillTools: registerSkillTools,
     unregisterSkillTools: unregisterSkillTools,
+    _refreshActiveSkills: function () {
+      // 重置 auto-register 标志并重新检查 hostname 匹配的技能
+      _autoRegisterCalled = false;
+      return _autoRegisterSkills();
+    },
     _activeSkillTools: _activeSkillTools,
     getState: function () {
       return {
