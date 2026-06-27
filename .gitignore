@@ -14,3 +14,6 @@ test_副本.html
 
 # Local Claude Code project instructions (per-developer, not for upstream)
 CLAUDE.md
+
+# Release notes — 本地保留，不上传，Release notes 只放 GitHub Release
+RELEASES.md
