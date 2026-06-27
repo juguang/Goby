@@ -1834,6 +1834,7 @@
   var _activeMcpTools = [];
   // 缓存: mcp__{serverName}__{toolName} → { serverId, serverName, endpoint, token, rawToolName }
   var _mcpToolMeta = {};
+  var _mcpLoadPromise = null;
 
   // ---- 常量定义（AGENT-05 限制参数） ----
   var MAX_LOOPS = 50;
@@ -1927,7 +1928,7 @@
     _activeMcpTools.length = 0;
     _mcpToolMeta = {};
 
-    return GobyStorage.getAllMcpServers().then(function (servers) {
+    return _mcpLoadPromise = GobyStorage.getAllMcpServers().then(function (servers) {
       var serverIds = Object.keys(servers);
       // 串行遍历已启用的 server
       var chain = Promise.resolve();
@@ -3299,9 +3300,11 @@
    */
   function callLLMStream(messages, onChunk) {
     // D-23: 直接从 storage 读取配置，不经过 postMessage
-    return GobyStorage.getConfig().then(function (cfg) {
-      _agentState.connectionStatus = 'green';
-      GobyPanel.updateConnectionStatus('green');
+    var mcpReady = _mcpLoadPromise || Promise.resolve();
+    return mcpReady.then(function () {
+      return GobyStorage.getConfig().then(function (cfg) {
+        _agentState.connectionStatus = 'green';
+        GobyPanel.updateConnectionStatus('green');
 
       // ★ 净化消息格式 — 确保 API 兼容
       var cleanMessages = sanitizeMessages(messages);
@@ -3334,7 +3337,8 @@
         sendStream(2);
       });
     });
-  }
+  });
+}
 
   /**
    * callLLM — 非流式 LLM 调用 (AGENT-03, D-03)
