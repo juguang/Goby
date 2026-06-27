@@ -1616,4 +1616,30 @@ describe('MCP UI (Plan 10-03)', function () {
       }, 100);
     });
   });
+
+  // -----------------------------------------------------------
+  //  page_scroll — 滚动工具
+  // -----------------------------------------------------------
+
+  it('page_scroll tool definition and return format', function () {
+    var tool = window.GobyAgent.nativeTools.find(function (t) {
+      return t.function.name === 'page_scroll';
+    });
+    expect(tool).toBeDefined();
+    expect(tool.function.parameters.properties.direction.default).toBe('down');
+    expect(tool.timeout).toBe(15000);
+
+    // top（不受 jsdom scroll 限制）
+    var topResult = tool.execute({ direction: 'top' });
+    expect(topResult).toMatch(/已滚动到页面顶部/);
+
+    // down（jsdom 中 scrollBy 无效果，但返回格式应正确）
+    var downResult = tool.execute({ direction: 'down', amount: 100 });
+    expect(downResult).toMatch(/已滚动下/);
+    expect(downResult).toMatch(/scrollY=/);
+
+    // 工具描述包含关键用法
+    expect(tool.function.description).toContain('滚动');
+    expect(tool.function.description).toContain('懒加载');
+  });
 });
