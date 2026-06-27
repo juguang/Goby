@@ -138,9 +138,11 @@
   // （否则 loadSession 完成时面板未就绪，renderWelcome + appendMessage(历史) 被静默跳过）
   // Plan 09-03: 首次运行预装内置技能（gobySkills 为空时自动注入 5 个技能）
   GobyPanel.init().then(function () {
-    // 先预装内置技能（异步），再初始化会话（确保 _autoRegisterSkills 可见）
+    // 先预装内置技能 + MCP 工具拉取（异步），再初始化会话
     return _preloadBuiltinSkills().then(function () {
-      // 面板就绪 + 技能就绪后再初始化会话
+      return _loadMcpTools();
+    }).then(function () {
+      // 面板就绪 + 技能就绪 + MCP 工具就绪后再初始化会话
       initSession();
       return chrome.storage.local.get(['gobyPanelState']).then(function (result) {
         var panelState = result.gobyPanelState || {};
@@ -151,8 +153,10 @@
     });
   }).catch(function () {
     // 初始化失败 — 退化到立即初始化会话（无面板渲染）
-    // 仍尝试预装技能
+    // 仍尝试预装技能和 MCP 工具
     _preloadBuiltinSkills().then(function () {
+      return _loadMcpTools();
+    }).then(function () {
       initSession();
     });
   });
@@ -1227,6 +1231,11 @@
   // ---- 动态技能工具 (Plan 09-02) ----
   var _activeSkillTools = [];
 
+  // ---- MCP 工具数组 (Plan 10-02) ----
+  var _activeMcpTools = [];
+  // 缓存: mcp__{serverName}__{toolName} → { serverId, serverName, endpoint, token, rawToolName }
+  var _mcpToolMeta = {};
+
   // ---- 常量定义（AGENT-05 限制参数） ----
   var MAX_LOOPS = 50;
   var MAX_TOOL_CALLS = 50;
@@ -1308,6 +1317,65 @@
         }
       }
       attempt(2);
+    });
+  }
+
+  // ---- MCP 工具拉取 (Plan 10-02, D-04/D-05) ----
+  // 从所有已启用的 MCP server 拉取工具列表，转换为 nativeTools 兼容格式
+  // 命名格式: mcp__{serverName}__{toolName}
+  function _loadMcpTools() {
+    // 清空之前的 MCP 工具（允许重复调用）
+    _activeMcpTools.length = 0;
+    _mcpToolMeta = {};
+
+    return GobyStorage.getAllMcpServers().then(function (servers) {
+      var serverIds = Object.keys(servers);
+      // 串行遍历已启用的 server
+      var chain = Promise.resolve();
+      serverIds.forEach(function (id) {
+        var server = servers[id];
+        if (!server.enabled) return;
+        chain = chain.then(function () {
+          return sendToSW('mcp-list-tools', {
+            action: 'mcp-list-tools',
+            serverId: server.id,
+            endpoint: server.endpoint,
+            token: server.token || ''
+          }).then(function (response) {
+            if (!response || !response.ok || !Array.isArray(response.tools)) {
+              console.warn('[MCP] listTools 失败: server=' + server.name, response && response.error);
+              return;
+            }
+            var serverName = server.name;
+            response.tools.forEach(function (tool) {
+              var mcpName = 'mcp__' + serverName + '__' + tool.name;
+              _mcpToolMeta[mcpName] = {
+                serverId: server.id,
+                serverName: serverName,
+                endpoint: server.endpoint,
+                token: server.token || '',
+                rawToolName: tool.name
+              };
+              _activeMcpTools.push({
+                type: 'function',
+                function: {
+                  name: mcpName,
+                  description: tool.description || '',
+                  parameters: tool.inputSchema || { type: 'object', properties: {} }
+                },
+                timeout: 15000
+                // 注意: MCP 工具没有 execute 方法 — 由 executeToolCall 的路由逻辑通过 SW 调用
+              });
+            });
+          }).catch(function (err) {
+            // 单个 server 失败静默跳过，不阻塞其他 server
+            console.warn('[MCP] server=' + server.name + ' 拉取失败:', err && err.message || err);
+          });
+        });
+      });
+      return chain;
+    }).catch(function () {
+      // 存储读取失败 — 静默降级，不阻塞 init 链
     });
   }
 
@@ -4192,6 +4260,9 @@
     _domainMatchesSkill: _domainMatchesSkill,
     // Plan 09-03: 内置技能预装
     _preloadBuiltinSkills: _preloadBuiltinSkills,
+    // Plan 10-02: MCP 工具
+    _activeMcpTools: _activeMcpTools,
+    loadMcpTools: _loadMcpTools,
     // Auto-skill: 自动技能生成
     _pushResultsToMessages: pushResultsToMessages,
     _maybeAutoCreateSkill: _maybeAutoCreateSkill,
