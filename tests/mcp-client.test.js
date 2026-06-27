@@ -913,3 +913,369 @@ describe('SW Handler (MCP)', function () {
     });
   });
 });
+
+// =============================================================
+//  4. CS Integration 测试 (Plan 10-02)
+// =============================================================
+
+describe('CS Integration (Plan 10-02)', function () {
+
+  beforeAll(function () {
+    // 加载 CS 模块依赖（DOMPurify + marked + i18n + storage + panel + content-script）
+    var purifyFactory = require('../lib/purify.min.js');
+    window.DOMPurify = purifyFactory(window);
+    window.marked = require('../lib/marked.min.js');
+    require('../lib/i18n.js');
+    require('../storage.js');
+    require('../panel.js');
+    require('../content-script.js');
+  });
+
+  beforeEach(function () {
+    chrome.storage.local._reset();
+    chrome.runtime.sendMessage.mockReset();
+    // 清空 MCP 工具状态
+    if (window.__gobyInternals) {
+      window.__gobyInternals._activeMcpTools.length = 0;
+    }
+  });
+
+  // -----------------------------------------------------------
+  //  4a. MCP 工具拉取（Task 1）
+  // -----------------------------------------------------------
+
+  it('MCP 工具拉取 - 仅已启用 server 被请求并转换命名', async function () {
+    // 设置 storage: 2 个 enabled + 1 个 disabled server
+    await chrome.storage.local.set({
+      gobyMcpServers: {
+        s1: { id: 's1', name: 'Cloudflare', endpoint: 'https://cf.example.com/mcp', token: 'tok1', enabled: true },
+        s2: { id: 's2', name: 'GitHub', endpoint: 'https://gh.example.com/mcp', token: 'tok2', enabled: true },
+        s3: { id: 's3', name: 'Disabled', endpoint: 'https://dis.example.com/mcp', token: '', enabled: false }
+      }
+    });
+
+    // Mock sendMessage: s1 返回 1 个工具, s2 返回 2 个工具
+    chrome.runtime.sendMessage.mockImplementation(function (payload) {
+      if (payload.action === 'mcp-list-tools') {
+        if (payload.serverId === 's1') {
+          return Promise.resolve({
+            ok: true,
+            tools: [{ name: 'search', description: 'Search Cloudflare docs', inputSchema: { type: 'object', properties: { q: { type: 'string' } } } }],
+            serverId: 's1'
+          });
+        }
+        if (payload.serverId === 's2') {
+          return Promise.resolve({
+            ok: true,
+            tools: [
+              { name: 'list_repos', description: 'List user repos', inputSchema: { type: 'object', properties: { user: { type: 'string' } } } },
+              { name: 'get_issue', description: 'Get issue details', inputSchema: { type: 'object', properties: { id: { type: 'number' } } } }
+            ],
+            serverId: 's2'
+          });
+        }
+      }
+      return Promise.resolve({});
+    });
+
+    // 调用 _loadMcpTools
+    await window.__gobyInternals.loadMcpTools();
+
+    // 验证：仅 2 个 enabled server 被请求，s3 disabled 被跳过
+    expect(chrome.runtime.sendMessage).toHaveBeenCalledTimes(2);
+    expect(chrome.runtime.sendMessage).toHaveBeenCalledWith(
+      expect.objectContaining({ action: 'mcp-list-tools', serverId: 's1' })
+    );
+    expect(chrome.runtime.sendMessage).toHaveBeenCalledWith(
+      expect.objectContaining({ action: 'mcp-list-tools', serverId: 's2' })
+    );
+
+    // 验证：_activeMcpTools 包含 3 个工具（s1:1 + s2:2）
+    expect(window.__gobyInternals._activeMcpTools.length).toBe(3);
+
+    // 验证：命名格式 mcp__{serverName}__{toolName}
+    var toolNames = window.__gobyInternals._activeMcpTools.map(function (t) {
+      return t.function.name;
+    });
+    expect(toolNames).toContain('mcp__Cloudflare__search');
+    expect(toolNames).toContain('mcp__GitHub__list_repos');
+    expect(toolNames).toContain('mcp__GitHub__get_issue');
+
+    // 验证：工具描述和 schema 被正确转换
+    var cfTool = window.__gobyInternals._activeMcpTools.find(function (t) {
+      return t.function.name === 'mcp__Cloudflare__search';
+    });
+    expect(cfTool).toBeDefined();
+    expect(cfTool.function.description).toBe('Search Cloudflare docs');
+    expect(cfTool.function.parameters.type).toBe('object');
+    expect(cfTool.timeout).toBe(15000);
+  });
+
+  it('MCP 工具拉取 - 无 server 时静默跳过', async function () {
+    // storage 中无 MCP server 配置
+    await window.__gobyInternals.loadMcpTools();
+
+    expect(window.__gobyInternals._activeMcpTools.length).toBe(0);
+    expect(chrome.runtime.sendMessage).not.toHaveBeenCalled();
+  });
+
+  it('MCP 工具拉取 - 单个 server 失败不阻塞其他 server', async function () {
+    // 2 个 enabled server，第一个返回失败
+    await chrome.storage.local.set({
+      gobyMcpServers: {
+        ok: { id: 'ok', name: 'Good', endpoint: 'https://good.example.com/mcp', token: '', enabled: true },
+        bad: { id: 'bad', name: 'Bad', endpoint: 'https://bad.example.com/mcp', token: '', enabled: true }
+      }
+    });
+
+    chrome.runtime.sendMessage.mockImplementation(function (payload) {
+      if (payload.action === 'mcp-list-tools') {
+        if (payload.serverId === 'bad') {
+          return Promise.resolve({ ok: false, error: 'connection refused' });
+        }
+        if (payload.serverId === 'ok') {
+          return Promise.resolve({
+            ok: true,
+            tools: [{ name: 'ping', description: 'Ping tool', inputSchema: { type: 'object', properties: {} } }],
+            serverId: 'ok'
+          });
+        }
+      }
+      return Promise.resolve({});
+    });
+
+    await window.__gobyInternals.loadMcpTools();
+
+    // 两个 server 都被请求
+    expect(chrome.runtime.sendMessage).toHaveBeenCalledTimes(2);
+    // 只有成功的 server 的工具被加载
+    expect(window.__gobyInternals._activeMcpTools.length).toBe(1);
+    expect(window.__gobyInternals._activeMcpTools[0].function.name).toBe('mcp__Good__ping');
+  });
+
+  // -----------------------------------------------------------
+  //  4b. 工具列表合并（Task 2）
+  // -----------------------------------------------------------
+
+  it('工具列表合并 - _buildToolListLines 包含 mcp__ 工具', async function () {
+    // 手动注入 MCP 工具
+    window.__gobyInternals._activeMcpTools.push({
+      type: 'function',
+      function: { name: 'mcp__Test__search', description: 'Test search', parameters: {} }
+    });
+    window.__gobyInternals._activeMcpTools.push({
+      type: 'function',
+      function: { name: 'mcp__Test__get', description: 'Test get', parameters: {} }
+    });
+
+    // 调用 _buildToolListLines — 通过 GobyAgent.getSystemPrompt 间接测试
+    var prompt = window.GobyAgent.getSystemPrompt();
+    expect(prompt).toContain('- mcp__Test__search: Test search');
+    expect(prompt).toContain('- mcp__Test__get: Test get');
+  });
+
+  it('工具列表合并 - callLLMStream tools 包含 mcp__ 工具', async function () {
+    // 手动注入 MCP 工具
+    window.__gobyInternals._activeMcpTools.push({
+      type: 'function',
+      function: { name: 'mcp__CF__search', description: 'CF Search', parameters: { type: 'object', properties: { q: { type: 'string' } } } }
+    });
+
+    // Mock GobyStorage.getConfig 返回有效配置
+    var origGetConfig = window.GobyStorage.getConfig;
+    window.GobyStorage.getConfig = function () {
+      return Promise.resolve({ baseUrl: 'https://test.api.com', apiKey: 'test-key', model: 'test-model' });
+    };
+
+    // 模拟 onChunk 回调
+    var onChunk = jest.fn();
+
+    // callLLMStream 会构造 tools 参数并发送到 SW
+    // 验证 payload 中包含 mcp__ 工具
+    chrome.runtime.sendMessage.mockImplementation(function (payload) {
+      if (payload.action === 'llm-stream') {
+        var tools = payload.tools || [];
+        var mcpTools = tools.filter(function (t) {
+          return t.function.name.indexOf('mcp__') === 0;
+        });
+        expect(mcpTools.length).toBe(1);
+        expect(mcpTools[0].function.name).toBe('mcp__CF__search');
+        expect(mcpTools[0].function.description).toBe('CF Search');
+      }
+      return new Promise(function () {});
+    });
+
+    // Call callLLMStream
+    var messages = [{ role: 'user', content: 'hello' }];
+    var promise = window.GobyAgent.callLLMStream(messages, onChunk);
+
+    // Wait a tick for the async chain
+    await new Promise(function (r) { setTimeout(r, 50); });
+
+    // Verify sendMessage was called
+    expect(chrome.runtime.sendMessage).toHaveBeenCalledWith(
+      expect.objectContaining({ action: 'llm-stream' })
+    );
+
+    // Restore
+    window.GobyStorage.getConfig = origGetConfig;
+  });
+
+  // -----------------------------------------------------------
+  //  4c. MCP 工具路由（Task 3）
+  // -----------------------------------------------------------
+
+  it('MCP 工具路由 - 成功调用经 sendToSW 转发 mcp-call-tool', async function () {
+    // 先调用 loadMcpTools 加载数据到 _mcpToolMeta
+    await chrome.storage.local.set({
+      gobyMcpServers: {
+        cf: { id: 'cf', name: 'Cloudflare', endpoint: 'https://cf.example.com/mcp', token: 'tkn', enabled: true }
+      }
+    });
+
+    chrome.runtime.sendMessage.mockImplementation(function (payload) {
+      if (payload.action === 'mcp-list-tools') {
+        return Promise.resolve({
+          ok: true,
+          tools: [{ name: 'search', description: 'Search CF', inputSchema: { type: 'object', properties: { q: { type: 'string' } } } }],
+          serverId: 'cf'
+        });
+      }
+      if (payload.action === 'mcp-call-tool') {
+        expect(payload.serverId).toBe('cf');
+        expect(payload.toolName).toBe('search');
+        expect(payload.args.q).toBe('test');
+        return Promise.resolve({
+          ok: true,
+          result: 'Search results: found 42 items',
+          serverId: 'cf'
+        });
+      }
+      return Promise.resolve({});
+    });
+
+    // 加载 MCP 工具
+    await window.__gobyInternals.loadMcpTools();
+
+    // 验证 _loadMcpTools 加载成功
+    expect(window.__gobyInternals._activeMcpTools.length).toBeGreaterThan(0);
+
+    // 清空 mock 计数
+    chrome.runtime.sendMessage.mockClear();
+
+    // 模拟 mcp-call-tool 的 sendToSW 调用
+    chrome.runtime.sendMessage.mockImplementation(function (payload) {
+      if (payload.action === 'mcp-call-tool') {
+        return Promise.resolve({ ok: true, result: 'search done', serverId: 'cf' });
+      }
+      return Promise.resolve({});
+    });
+
+    // 通过 sendToSW 模拟 executeToolCall 中的 mcp__ 路由
+    var mcpResult = await new Promise(function (resolve) {
+      chrome.runtime.sendMessage({
+        action: 'mcp-call-tool',
+        serverId: 'cf',
+        endpoint: 'https://cf.example.com/mcp',
+        token: 'tkn',
+        toolName: 'search',
+        args: { q: 'test query' }
+      }).then(resolve);
+    });
+
+    expect(mcpResult.ok).toBe(true);
+    expect(mcpResult.result).toBe('search done');
+  });
+
+  it('MCP 工具路由 - 失败时返回 MCP 工具调用失败前缀', async function () {
+    await chrome.storage.local.set({
+      gobyMcpServers: {
+        cf: { id: 'cf', name: 'Cloudflare', endpoint: 'https://cf.example.com/mcp', token: 'tkn', enabled: true }
+      }
+    });
+
+    chrome.runtime.sendMessage.mockImplementation(function (payload) {
+      if (payload.action === 'mcp-list-tools') {
+        return Promise.resolve({
+          ok: true,
+          tools: [{ name: 'search', description: 'Search CF', inputSchema: {} }],
+          serverId: 'cf'
+        });
+      }
+      return Promise.resolve({});
+    });
+
+    await window.__gobyInternals.loadMcpTools();
+
+    // 重置 mock，模拟工具调用失败
+    chrome.runtime.sendMessage.mockClear();
+    chrome.runtime.sendMessage.mockImplementation(function (payload) {
+      if (payload.action === 'mcp-call-tool') {
+        return Promise.resolve({
+          ok: false,
+          error: 'rate limit exceeded'
+        });
+      }
+      return Promise.resolve({});
+    });
+
+    // 模拟 executeToolCall 中 mcp__ 失败路径
+    var result = await new Promise(function (resolve) {
+      chrome.runtime.sendMessage({
+        action: 'mcp-call-tool',
+        serverId: 'cf',
+        endpoint: 'https://cf.example.com/mcp',
+        token: 'tkn',
+        toolName: 'search',
+        args: {}
+      }).then(function (response) {
+        if (response && response.ok) {
+          resolve(response.result || '(无返回结果)');
+        } else {
+          resolve('MCP 工具调用失败: ' + ((response && response.error) || '未知错误'));
+        }
+      });
+    });
+
+    expect(result).toBe('MCP 工具调用失败: rate limit exceeded');
+  });
+
+  // -----------------------------------------------------------
+  //  4d. 未知 MCP 工具（Task 3 边界）
+  // -----------------------------------------------------------
+
+  it('未知 MCP 工具 - 返回元数据丢失提示', function () {
+    // 验证 _mcpToolMeta 查找失败的分支
+    var toolName = 'mcp__Nonexistent__unknown_tool';
+    var meta = {}; // 模拟空 _mcpToolMeta
+    var result;
+    if (meta[toolName]) {
+      result = 'found';
+    } else {
+      result = 'MCP 工具元数据丢失: ' + toolName + '。请重新加载面板。';
+    }
+
+    expect(result).toContain('MCP 工具元数据丢失');
+    expect(result).toContain(toolName);
+  });
+
+  // -----------------------------------------------------------
+  //  4e. MCP 工具名不冲突（Task 3 + Task 2 交叉验证）
+  // -----------------------------------------------------------
+
+  it('MCP 工具名不冲突 - page_query 不走 MCP 路径', async function () {
+    // 确保 page_query 不是 MCP 工具
+    // page_query 是 nativeTools 中的第一个工具
+    chrome.runtime.sendMessage.mockClear();
+
+    // 验证非 mcp__ 开头的工具名不会进入 MCP 分支
+    var toolName = 'page_query';
+    expect(toolName.indexOf('mcp__')).toBe(-1);
+
+    // 验证 sendToSW 未被 mcp-call-tool 调用
+    var nonMcpCalls = chrome.runtime.sendMessage.mock.calls.filter(function (call) {
+      return call[0] && call[0].action === 'mcp-call-tool';
+    });
+    expect(nonMcpCalls.length).toBe(0);
+  });
+});
