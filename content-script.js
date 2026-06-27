@@ -727,6 +727,47 @@
 
     body.appendChild(skillsSection);
 
+    // ---- Phase 10-03: MCP Servers 管理区域 ----
+    var mcpSection = document.createElement('div');
+    mcpSection.className = 'goby-mcp-section';
+
+    // 节标题 + 添加按钮
+    var mcpTitleRow = document.createElement('div');
+    mcpTitleRow.className = 'goby-mcp-section-title';
+
+    var mcpTitleText = document.createElement('span');
+    mcpTitleText.textContent = t('modal.mcp_title');
+
+    var mcpAddBtn = document.createElement('button');
+    mcpAddBtn.className = 'goby-mcp-add-btn';
+    mcpAddBtn.id = 'goby-mcp-add-btn';
+    mcpAddBtn.textContent = t('modal.mcp_add_btn');
+
+    mcpTitleRow.appendChild(mcpTitleText);
+    mcpTitleRow.appendChild(mcpAddBtn);
+    mcpSection.appendChild(mcpTitleRow);
+
+    // 反馈信息容器
+    var mcpFeedback = document.createElement('div');
+    mcpFeedback.className = 'goby-mcp-feedback';
+    mcpFeedback.id = 'goby-mcp-feedback';
+    mcpSection.appendChild(mcpFeedback);
+
+    // 空状态提示
+    var mcpNoServers = document.createElement('div');
+    mcpNoServers.className = 'goby-mcp-no-servers';
+    mcpNoServers.id = 'goby-mcp-no-servers';
+    mcpNoServers.textContent = t('modal.mcp_no_servers');
+    mcpSection.appendChild(mcpNoServers);
+
+    // Server 列表容器
+    var mcpList = document.createElement('div');
+    mcpList.className = 'goby-mcp-list';
+    mcpList.id = 'goby-mcp-list';
+    mcpSection.appendChild(mcpList);
+
+    body.appendChild(mcpSection);
+
     // ---- 技能管理事件绑定 ----
 
     // 显示/隐藏导入 URL 输入行
@@ -1143,6 +1184,9 @@
     console.log('[skills] 加载技能列表');
     refreshSkillsList();
     refreshRecommendedList();
+
+    // Phase 10-03: 加载 MCP server 列表
+    refreshMcpList();
 
     // ---- Event Wiring ----
 
